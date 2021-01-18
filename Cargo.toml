@@ -17,4 +17,4 @@ tokio = {version = "1.0", features = ["macros", "rt-multi-thread"]}
 [dependencies.serenity]
 default-features=false
 features=["client", "gateway", "rustls_backend", "model", "cache"]
-version = "0.9.3"
+version = "0.10.2"
