@@ -65,6 +65,35 @@ impl EventHandler for Handler {
                 msg.author,
                 channel.id().to_string()
             );
+            //let mut messages = channel
+            //.id()
+            //.messages(&ctx, |retreiver| retreiver.before(msg.id).limit(100))
+            //.await
+            //.expect("Failed getting messages");
+            //messages.reverse();
+            let mut messages: Vec<Message> = Vec::new();
+            let mut x = 100;
+            while x == 100 {
+                let last_msg = &messages.last().unwrap_or(&msg);
+                let new_msgs = channel
+                    .id()
+                    .messages(&ctx, |retreiver| retreiver.before(last_msg.id).limit(100))
+                    .await
+                    .expect("Failed getting messages");
+                //for i in &new_msgs {
+                //println!("{} [{}]: {}", i.author.name, i.timestamp, i.content);
+                //}
+                x = new_msgs.len();
+                messages.extend(new_msgs.into_iter());
+            }
+            messages.reverse();
+            for message in &messages {
+                println!(
+                    "{} [{}]: {}",
+                    message.author.name, message.timestamp, message.content
+                );
+
+            }
             info!("Archive complete.");
         }
     }
