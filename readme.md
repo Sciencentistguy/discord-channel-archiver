@@ -1,6 +1,6 @@
 # discord-channel-archiver
 
-A small discord bot to archive the messages in a discord text channel
+A small discord bot to archive the messages in a discord text channel.
 
 ---
 

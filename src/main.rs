@@ -1,12 +1,13 @@
-use log::*;
+mod json;
+
 use std::env;
 
+use log::*;
 use serenity::{
     async_trait,
     model::{channel::Message, gateway::Ready},
     prelude::*,
 };
-
 use structopt::StructOpt;
 
 #[tokio::main]
@@ -27,7 +28,6 @@ async fn main() {
             .expect("Expected either --token, --token-filename, or a token in the environment")
     };
 
-    info!("parsed envvar / opts");
     println!("Token: {}", token);
 
     // Create a new instance of the Client, logging in as a bot. This will
@@ -38,7 +38,7 @@ async fn main() {
         .await
         .expect("Err creating client");
 
-    info!("created client");
+    trace!("Created client.");
 
     // Finally, start a single shard, and start listening to events.
     //
@@ -59,41 +59,45 @@ impl EventHandler for Handler {
                 .channel_id
                 .to_channel(&ctx)
                 .await
-                .expect("Channel not found");
+                .expect("Channel not found")
+                .guild()
+                .expect("Invalid channel type");
+            let channel_name = channel.name;
+            let guild_name = {
+                let guild = channel.guild_id.to_partial_guild(&ctx).await.unwrap();
+                guild.name
+            };
             info!(
                 "Archive started by user {} in channel {}",
                 msg.author,
-                channel.id().to_string()
+                channel.id.to_string(),
             );
-            //let mut messages = channel
-            //.id()
-            //.messages(&ctx, |retreiver| retreiver.before(msg.id).limit(100))
-            //.await
-            //.expect("Failed getting messages");
-            //messages.reverse();
             let mut messages: Vec<Message> = Vec::new();
             let mut x = 100;
             while x == 100 {
-                let last_msg = &messages.last().unwrap_or(&msg);
+                let last_msg = (&messages).last().unwrap_or(&msg);
                 let new_msgs = channel
-                    .id()
+                    .id
                     .messages(&ctx, |retreiver| retreiver.before(last_msg.id).limit(100))
                     .await
                     .expect("Failed getting messages");
-                //for i in &new_msgs {
-                //println!("{} [{}]: {}", i.author.name, i.timestamp, i.content);
-                //}
                 x = new_msgs.len();
                 messages.extend(new_msgs.into_iter());
             }
             messages.reverse();
-            for message in &messages {
-                println!(
-                    "{} [{}]: {}",
-                    message.author.name, message.timestamp, message.content
-                );
+            let messages = messages; // messages is a Vec<Message>, in order from oldest to newest
 
+            match json::write_json(
+                &messages,
+                format!("/dev/shm/{}-{}.json", guild_name, channel_name),
+                &ctx,
+            )
+            .await
+            {
+                Ok(_) => {}
+                Err(x) => error!("Error writing json: {}", x),
             }
+
             info!("Archive complete.");
         }
     }
