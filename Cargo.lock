@@ -211,8 +211,10 @@ name = "discord-channel-archiver"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "lazy_static",
  "log",
  "pretty_env_logger",
+ "regex",
  "reqwest 0.10.10",
  "serde",
  "serde_json",
