@@ -56,6 +56,11 @@ async fn main() {
 
 struct Handler;
 
+#[derive(Debug)]
+struct ArchivalMode {
+    json: bool,
+}
+
 #[async_trait]
 impl EventHandler for Handler {
     async fn message(&self, ctx: Context, msg: Message) {
@@ -66,7 +71,7 @@ impl EventHandler for Handler {
 
             let capts = RE.captures(&msg.content);
             if capts.as_ref().map(|x| x.get(0)).is_none() {
-                msg.reply(&ctx, "Invalid syntax.\nCorrect usage is `!archive <channel> [mode(s)]`\nValid modes are `all,json`.").await.expect("Failed to reply to message.");
+                msg.reply(&ctx, "Invalid syntax.\nCorrect usage is `!archive <channel> [mode(s)]`, where `<channel>` is the channel you want to archive, and `[mode(s)]` is a possibly comma-separated list of modes.\nValid modes are: `json`. All modes are enabled if this parameter is ommited.").await.expect("Failed to reply to message.");
                 info!("Invalid archive command supplied: '{}'", &msg.content);
                 return;
             }
@@ -79,7 +84,13 @@ impl EventHandler for Handler {
                 Some(x) => x,
                 None => vec!["all"],
             };
-
+            let modes = if modes.contains(&"all") {
+                ArchivalMode { json: true }
+            } else {
+                ArchivalMode {
+                    json: modes.contains(&"json"),
+                }
+            };
             let channel = match ChannelId::from_str(channel_id_str) {
                 Ok(x) => x,
                 Err(_) => {
@@ -120,12 +131,31 @@ impl EventHandler for Handler {
             messages.reverse();
             let messages = messages; // messages is a Vec<Message>, in order from oldest to newest
             let output_filename = format!("{}/{}-{}", PATH, guild_name, channel_name);
-            match json::write_json(&messages, format!("{}.json", output_filename), &ctx).await {
-                Ok(_) => {}
-                Err(x) => error!("Error writing json: {}", x),
+
+            let mut created_files: Vec<String> = Vec::new();
+            if modes.json {
+                let filename = format!("{}.json", output_filename);
+                match json::write_json(&messages, &filename, &ctx).await {
+                    Ok(_) => {}
+                    Err(x) => error!("Error writing json: {}", x),
+                }
+                created_files.push(filename);
             }
 
             info!("Archive complete.");
+            msg.reply(
+                &ctx,
+                format!("Done!\nCreated files:\n```\n{}\n```", {
+                    let mut outreply = String::new();
+                    for file in created_files {
+                        outreply.push_str(&file);
+                        outreply.truncate(outreply.trim_end().len());
+                    }
+                    outreply
+                }),
+            )
+            .await
+            .expect("Failed to reply to message.");
         }
     }
 
