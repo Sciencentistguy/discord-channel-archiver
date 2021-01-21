@@ -71,7 +71,7 @@ impl EventHandler for Handler {
 
             let capts = RE.captures(&msg.content);
             if capts.as_ref().map(|x| x.get(0)).is_none() {
-                msg.reply(&ctx, "Invalid syntax.\nCorrect usage is `!archive <channel> [mode(s)]`, where `<channel>` is the channel you want to archive, and `[mode(s)]` is a possibly comma-separated list of modes.\nValid modes are: `json`. All modes are enabled if this parameter is ommited.").await.expect("Failed to reply to message.");
+                msg.reply(&ctx, "Invalid syntax.\nCorrect usage is `!archive <channel> [mode(s)]`, where `<channel>` is the channel you want to archive, and `[mode(s)]` is a possibly comma-separated list of modes.\nValid modes are: `json`. All modes are enabled if this parameter is omitted.").await.expect("Failed to reply to message.");
                 info!("Invalid archive command supplied: '{}'", &msg.content);
                 return;
             }
