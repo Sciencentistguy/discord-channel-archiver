@@ -14,7 +14,13 @@ A small discord bot to archive the messages in a discord text channel.
 - Send the command `!archive <channel> [mode(s)]`, where `<channel>` is the channel you want to archive, and `[mode(s)]` is a possibly comma-separated list of modes. Valid modes are: `json`. All modes are enabled if this parameter is omitted.
 - Sit back and watch the bot export the channel to the file format(s) you requested.
 
----
+## Incomplete features
+
+I have some planned features that I am yet to finish (or even start) implementing:
+
+- HTML output, similar to discord's own interface .
+  - Dark mode and Light mode support
+- YAML output.
 
 Based on [Serenity](https://github.com/serenity-rs/serenity).
 
