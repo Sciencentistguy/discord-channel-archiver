@@ -22,6 +22,8 @@ I have some planned features that I am yet to finish (or even start) implementin
   - Dark mode and Light mode support
 - YAML output.
 
+---
+
 Based on [Serenity](https://github.com/serenity-rs/serenity).
 
 Inspired by [this](https://github.com/Tyrrrz/DiscordChatExporter) similar program.
