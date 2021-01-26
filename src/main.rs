@@ -1,3 +1,4 @@
+mod html;
 mod json;
 
 use std::env;
@@ -59,6 +60,7 @@ struct Handler;
 #[derive(Debug)]
 struct ArchivalMode {
     json: bool,
+    html: bool,
 }
 
 #[async_trait]
@@ -71,7 +73,7 @@ impl EventHandler for Handler {
 
             let capts = RE.captures(&msg.content);
             if capts.as_ref().map(|x| x.get(0)).is_none() {
-                msg.reply(&ctx, "Invalid syntax.\nCorrect usage is `!archive <channel> [mode(s)]`, where `<channel>` is the channel you want to archive, and `[mode(s)]` is a possibly comma-separated list of modes.\nValid modes are: `json`. All modes are enabled if this parameter is omitted.").await.expect("Failed to reply to message.");
+                msg.reply(&ctx, "Invalid syntax.\nCorrect usage is `!archive <channel> [mode(s)]`, where `<channel>` is the channel you want to archive, and `[mode(s)]` is a possibly comma-separated list of modes.\nValid modes are: `json,html`. All modes are enabled if this parameter is omitted.").await.expect("Failed to reply to message.");
                 info!("Invalid archive command supplied: '{}'", &msg.content);
                 return;
             }
@@ -85,10 +87,14 @@ impl EventHandler for Handler {
                 None => vec!["all"],
             };
             let modes = if modes.contains(&"all") {
-                ArchivalMode { json: true }
+                ArchivalMode {
+                    json: true,
+                    html: true,
+                }
             } else {
                 ArchivalMode {
                     json: modes.contains(&"json"),
+                    html: modes.contains(&"html"),
                 }
             };
             let channel = match ChannelId::from_str(channel_id_str) {
@@ -141,6 +147,14 @@ impl EventHandler for Handler {
                 }
                 created_files.push(filename);
             }
+            if modes.html {
+                let filename = format!("{}.html", output_filename);
+                match html::write_html(&messages, &filename, &ctx).await {
+                    Ok(_) => {}
+                    Err(x) => error!("Error writing html: {}", x),
+                }
+                created_files.push(filename);
+            }
 
             info!("Archive complete.");
             msg.reply(
@@ -149,8 +163,9 @@ impl EventHandler for Handler {
                     let mut outreply = String::new();
                     for file in created_files {
                         outreply.push_str(&file);
-                        outreply.truncate(outreply.trim_end().len());
+                        outreply.push('\n');
                     }
+                    outreply.truncate(outreply.trim_end().len());
                     outreply
                 }),
             )
