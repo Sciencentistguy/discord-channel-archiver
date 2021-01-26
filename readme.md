@@ -2,6 +2,8 @@
 
 A small discord bot to archive the messages in a discord text channel.
 
+This is still WIP, but the JSON mode is (probably, I can't guarantee anything) in its final form.
+
 ## Usage
 
 - Edit `src/main.rs` and change the value of the constant `OUTPUT_DIRECTORY` to your desired download location.
