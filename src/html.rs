@@ -15,6 +15,7 @@ pub async fn write_html<P: AsRef<Path>>(
     path: P,
     ctx: &Context,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    trace!("Entered HTML generator.");
     let channel = messages
         .first()
         .unwrap()
@@ -69,7 +70,7 @@ pub async fn write_html<P: AsRef<Path>>(
     } else {
         html.replace("CHANNEL_TOPIC_DIV", "")
     };
-
+    trace!("Generated preamble");
     for (i, message) in messages.iter().enumerate() {
         let author = &message.author;
         let author_nick_or_user = match author.nick_in(&ctx, guild.id).await {
@@ -154,6 +155,7 @@ style="color: rgb({}, {}, {})">
         html.push_str(&message_group);
         info!("Archived message {} / {}", i, messages.len());
     }
+    trace!("Generated message html");
 
     html.push_str(include_str!("html_templates/postamble_template.html"));
 
@@ -168,9 +170,9 @@ style="color: rgb({}, {}, {})">
 
     let html = html.replace("\u{feff}", "");
 
-    println!("{}", html);
-
     fs::write(path, html)?;
+
+    info!("HTML generation complete.");
 
     Ok(())
 }

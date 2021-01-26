@@ -97,6 +97,8 @@ impl EventHandler for Handler {
                     html: modes.contains(&"html"),
                 }
             };
+            trace!("Command parsed");
+
             let channel = match ChannelId::from_str(channel_id_str) {
                 Ok(x) => x,
                 Err(_) => {
@@ -136,6 +138,7 @@ impl EventHandler for Handler {
             }
             messages.reverse();
             let messages = messages; // messages is a Vec<Message>, in order from oldest to newest
+            trace!("Messages downloaded");
             let output_filename = format!("{}/{}-{}", PATH, guild_name, channel_name);
 
             let mut created_files: Vec<String> = Vec::new();
