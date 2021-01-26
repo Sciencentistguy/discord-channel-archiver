@@ -1,15 +1,9 @@
-use std::collections::HashMap;
-
 use std::fs;
 use std::path::Path;
 
 use log::*;
 
-use serenity::model::channel::ChannelCategory;
 use serenity::model::channel::Message;
-use serenity::model::guild::Role;
-use serenity::model::id::RoleId;
-use serenity::model::user::User;
 use serenity::prelude::Context;
 
 static CORE_THEME_CSS: &str = include_str!("html_templates/core.css");
@@ -157,11 +151,11 @@ style="color: rgb({}, {}, {})">
             message.id.to_string(),
             message.content,
         );
-        html.extend(message_group.chars());
+        html.push_str(&message_group);
         info!("Archived message {} / {}", i, messages.len());
     }
 
-    html.extend(include_str!("html_templates/postamble_template.html").chars());
+    html.push_str(include_str!("html_templates/postamble_template.html"));
 
     let html = html.replace(
         "EXPORTED_MESSAGES_NUMBER",
