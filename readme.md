@@ -2,7 +2,7 @@
 
 A small discord bot to archive the messages in a discord text channel.
 
-This is still WIP, but the JSON mode is (probably, I can't guarantee anything) in its final form.
+This is still WIP. The HTML and JSON modes are vaguely complete, but they may still change in the future.
 
 ## Usage
 
@@ -30,6 +30,6 @@ Based on [Serenity](https://github.com/serenity-rs/serenity).
 
 Inspired by [this](https://github.com/Tyrrrz/DiscordChatExporter) similar program.
 
-The HTML / CSS template from [DiscordChatExporter](https://github.com/Tyrrrz/DiscordChatExporter) is used, under the terms of the GNU GPL.
+The HTML / CSS templates are derived from the ones from [DiscordChatExporter](https://github.com/Tyrrrz/DiscordChatExporter), under the terms of the GNU GPL.
 
 Available under the terms of the GNU AGPL.
