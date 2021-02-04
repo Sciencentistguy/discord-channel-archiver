@@ -177,15 +177,28 @@ style="color: rgb({}, {}, {})">
 
         let content_cleaned = message.content.replace("<", "&lt;").replace(">", "&gt;");
         lazy_static! {
-            static ref BOLD_RE: Regex = Regex::new(r"\*\*(.*)\*\*").unwrap();
-            static ref ITALICS_RE: Regex = Regex::new(r"\*(.*)\*").unwrap();
+            static ref BOLD_RE: Regex = Regex::new(r"\*\*([^\*]+)\*\*").unwrap();
+            static ref ITALICS_RE: Regex = Regex::new(r"\*([^\*]+)\*").unwrap();
+            static ref MULTILINE_CODE_RE: Regex = Regex::new(r"```([^`]+)```").unwrap();
+            static ref INLINE_CODE_RE: Regex = Regex::new(r"`([^`]*)`").unwrap();
         };
         let content_cleaned = BOLD_RE.replace_all(&content_cleaned, |capts: &regex::Captures| {
             format!("<b>{}</b>", &capts[1])
         });
-        let content_cleaned = ITALICS_RE.replace_all(&content_cleaned, |capts: &regex::Captures| {
-            format!("<i>{}</i>", &capts[1])
-        });
+        let content_cleaned = ITALICS_RE
+            .replace_all(&content_cleaned, |capts: &regex::Captures| {
+                format!("<i>{}</i>", &capts[1])
+            });
+
+        let content_cleaned = MULTILINE_CODE_RE
+            .replace_all(&content_cleaned, |capts: &regex::Captures| {
+                format!(r#"<pre class="pre pre--multiline">{}</pre>"#, &capts[1])
+            });
+
+        let content_cleaned = INLINE_CODE_RE
+            .replace_all(&content_cleaned, |capts: &regex::Captures| {
+                format!(r#"<code class="pre pre--inline">{}</code>"#, &capts[1])
+            });
 
         let message_group = format!(
             r#"<div class="chatlog__message-group">

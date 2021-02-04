@@ -122,7 +122,18 @@ img {
 }
 
 .pre {
-  font-family: "Consolas", "Courier New", Courier, monospace;
+  font-family: Consolas, Andale Mono WT, Andale Mono, Lucida Console,
+    Lucida Sans Typewriter, DejaVu Sans Mono, Bitstream Vera Sans Mono,
+    Liberation Mono, Nimbus Mono L, Monaco, Courier New, Courier, monospace;
+
+  font-size: 0.875rem;
+  line-height: 1.125rem;
+  text-indent: 0;
+  white-space: pre-wrap;
+  scrollbar-width: thin;
+  /*scrollbar-color: var(--background-tertiary) var(--background-secondary);*/
+  /*background: var(--background-secondary);*/
+  /*border: 1px solid var(--background-tertiary);*/
 }
 
 .pre--multiline {
@@ -130,12 +141,24 @@ img {
   padding: 0.5em;
   border: 2px solid;
   border-radius: 5px;
+  width: 90%;
 }
 
 .pre--inline {
   padding: 2px;
   border-radius: 3px;
   font-size: 0.85em;
+
+  width: auto;
+  height: auto;
+  padding: 0.2em;
+  margin: -0.2em 0;
+  border-radius: 3px;
+  font-size: 85%;
+  text-indent: 0;
+  border: none;
+  white-space: pre-wrap;
+  background-color: rgb(47, 49, 54);
 }
 
 .mention {
