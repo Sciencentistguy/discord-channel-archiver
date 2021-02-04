@@ -1,10 +1,11 @@
+use std::fs;
 use std::path::Path;
 
+use log::*;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use serenity::model::channel::Message;
 use serenity::prelude::Context;
-use std::fs;
 
 #[derive(Serialize, Deserialize, Debug)]
 struct GuildJson {
@@ -54,6 +55,7 @@ pub async fn write_json<P: AsRef<Path>>(
     path: P,
     ctx: &Context,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    trace!("Entered json writer.");
     let channel = match (&messages)
         .first()
         .unwrap()
@@ -85,8 +87,10 @@ pub async fn write_json<P: AsRef<Path>>(
 
     let message_jsons: Vec<MessageJson> = messages
         .iter()
-        .map(|message| {
+        .enumerate()
+        .map(|(i, message)| {
             let author = &message.author;
+            trace!("Archived message {} / {}", i, messages.len());
             MessageJson {
                 id: message.id.to_string(),
                 timestamp: message.timestamp.to_string(),
@@ -121,5 +125,6 @@ pub async fn write_json<P: AsRef<Path>>(
     });
     let file = fs::File::create(path)?;
     serde_json::to_writer_pretty(file, &json)?;
+    info!("JSON generation complete.");
     Ok(())
 }

@@ -68,7 +68,7 @@ impl EventHandler for Handler {
     async fn message(&self, ctx: Context, msg: Message) {
         if msg.content.starts_with("!archive") {
             lazy_static! {
-                static ref RE: Regex = Regex::new(r"^!archive <#(\d+)> ?([\w,]+)?$").unwrap();
+                static ref RE: Regex = Regex::new(r"^!archive +<#(\d+)> *([\w,]+)?$").unwrap();
             }
 
             let capts = RE.captures(&msg.content);

@@ -1,10 +1,12 @@
+use log::*;
 use std::fs;
 use std::path::Path;
 
-use log::*;
-
 use serenity::model::channel::Message;
+use serenity::model::user::User;
 use serenity::prelude::Context;
+
+use futures::future::join_all;
 
 static CORE_THEME_CSS: &str = include_str!("html_templates/core.css");
 static DARK_THEME_CSS: &str = include_str!("html_templates/dark.css");
@@ -55,7 +57,7 @@ pub async fn write_html<P: AsRef<Path>>(
         "DISCORD_CHANNEL_CATEGORY_SLASH_NAME",
         &match category_name {
             Some(x) => format!("{} / {}", x, channel.name,),
-            None => channel.name,
+            None => channel.name.clone(),
         },
     );
 
@@ -64,37 +66,78 @@ pub async fn write_html<P: AsRef<Path>>(
             "CHANNEL_TOPIC_DIV",
             &format!(
                 r#"<div class="preamble__entry preamble__entry--small">{}</div>"#,
-                channel.topic.unwrap()
+                channel.topic.as_ref().unwrap()
             ),
         )
     } else {
         html.replace("CHANNEL_TOPIC_DIV", "")
     };
     trace!("Generated preamble");
-    for (i, message) in messages.iter().enumerate() {
-        let author = &message.author;
-        let author_nick_or_user = match author.nick_in(&ctx, guild.id).await {
-            Some(x) => x,
-            None => author.name.clone(),
-        };
+    trace!("Begin getting members");
+    let mut members: Vec<_> = messages.iter().map(|x| &x.author).collect();
+    members.sort_by_key(|user| user.id);
+    members.dedup();
+    let members: Vec<_> = members.iter().map(|x| guild.member(&ctx, x.id)).collect();
 
-        let author_highest_role = {
-            let roles = {
-                match guild.member(&ctx, &author.id).await {
-                    Ok(x) => x.roles,
-                    Err(_) => Vec::new(),
-                }
-            };
-            let mut roles: Vec<_> = roles
-                .iter()
-                .map(|roleid| guild.roles.get(&roleid).unwrap())
-                .collect();
-            roles.sort_by_key(|role| role.position);
-            match roles.last() {
-                Some(x) => Some(*x),
-                None => None,
+    trace!("Need to get {} members", members.len());
+    let members = join_all(members).await;
+    let members: Vec<_> = members
+        .into_iter()
+        .filter_map(|x| match x {
+            Ok(x) => Some(x),
+            Err(_) => None,
+        })
+        .collect();
+
+    let member_userids: Vec<_> = members.iter().map(|x| x.user.id).collect();
+
+    let get_highest_role = |user: &User| {
+        //if !channel_members_users.iter().find(|x| x.).is_some();
+        if !member_userids.contains(&user.id) {
+            warn!("Message author found who is not a member of the channel");
+            return None;
+        }
+        let roles = match members.iter().find(|member| member.user.id == user.id) {
+            Some(x) => &x.roles,
+            None => {
+                warn!("User {} has no roles", user.name);
+                return None;
             }
         };
+
+        let mut roles: Vec<_> = roles
+            .iter()
+            .map(|roleid| guild.roles.get(&roleid).unwrap())
+            .collect();
+        roles.sort_by_key(|role| role.position);
+        match roles.last() {
+            Some(x) => Some(*x),
+            None => None,
+        }
+    };
+
+    let get_name_used = |user: &User| {
+        trace!("Begin getting name for user {}", user.name);
+        if !member_userids.contains(&user.id) {
+            warn!("Message author found who is not a member of the channel");
+            return user.name.clone();
+        }
+        match members
+            .iter()
+            .find(|member| member.user.id == user.id)
+            .unwrap()
+            .nick
+        {
+            Some(ref x) => x.clone(),
+            None => user.name.clone(),
+        }
+    };
+
+    trace!("Begin saving messages");
+    for (i, message) in messages.iter().enumerate() {
+        let author = &message.author;
+        let author_nick_or_user = get_name_used(&message.author);
+        let author_highest_role = get_highest_role(&message.author);
 
         let author_avatar_container = format!(
             r#"<div class="chatlog__author-avatar-container">
@@ -153,7 +196,7 @@ style="color: rgb({}, {}, {})">
             message.content,
         );
         html.push_str(&message_group);
-        info!("Archived message {} / {}", i, messages.len());
+        trace!("Archived message {} / {}", i, messages.len());
     }
     trace!("Generated message html");
 
