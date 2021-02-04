@@ -96,6 +96,7 @@ pub async fn write_html<P: AsRef<Path>>(
     let member_userids: Vec<_> = members.iter().map(|x| x.user.id).collect();
 
     let get_highest_role = |user: &User| {
+        trace!("Begin getting highest role for user {}", user.name);
         //if !channel_members_users.iter().find(|x| x.).is_some();
         if !member_userids.contains(&user.id) {
             warn!("Message author found who is not a member of the channel");
@@ -137,6 +138,55 @@ pub async fn write_html<P: AsRef<Path>>(
         }
     };
 
+    let clean_content = |content: &str| -> String {
+        let content = content.replace("<", "&lt;").replace(">", "&gt;");
+        lazy_static! {
+            static ref BOLD_RE: Regex = Regex::new(r"\*\*([^\*]+)\*\*").unwrap();
+            static ref ITALICS_RE: Regex = Regex::new(r"\*([^\*]+)\*").unwrap();
+            static ref MULTILINE_CODE_RE: Regex = Regex::new(r"```([^`]+)```").unwrap();
+            static ref INLINE_CODE_RE: Regex = Regex::new(r"`([^`]*)`").unwrap();
+            static ref EMOJI_RE: Regex = Regex::new(r":(\w+):").unwrap();
+        };
+        let content = BOLD_RE.replace_all(&content, |capts: &regex::Captures| {
+            format!("<b>{}</b>", &capts[1])
+        });
+        let content = ITALICS_RE.replace_all(&content, |capts: &regex::Captures| {
+            format!("<i>{}</i>", &capts[1])
+        });
+
+        let content = MULTILINE_CODE_RE.replace_all(&content, |capts: &regex::Captures| {
+            format!(r#"<pre class="pre pre--multiline">{}</pre>"#, &capts[1])
+        });
+
+        let content = INLINE_CODE_RE.replace_all(&content, |capts: &regex::Captures| {
+            format!(r#"<code class="pre pre--inline">{}</code>"#, &capts[1])
+        });
+
+        let content = {
+            let mut content: String = content.into();
+            let mut emoji_replacements: Vec<(String, String)> = Vec::new();
+
+            let emoji_matches = EMOJI_RE.find_iter(&content);
+
+            for m in emoji_matches {
+                trace!("Found emoji {} in '{}'", m.as_str(), content);
+                let emoji_name = &content[m.start() + 1..m.end() - 1];
+                let emoji_symbol = match gh_emoji::get(emoji_name) {
+                    Some(x) => x,
+                    None => continue,
+                };
+                emoji_replacements.push((m.as_str().into(), emoji_symbol.into()));
+            }
+
+            for (from, to) in emoji_replacements {
+                content = content.replace(&from, &to);
+            }
+            content
+        };
+
+        content
+    };
+
     trace!("Begin saving messages");
     for (i, message) in messages.iter().enumerate() {
         let author = &message.author;
@@ -175,30 +225,7 @@ style="color: rgb({}, {}, {})">
             author_nick_or_user,
         );
 
-        let content_cleaned = message.content.replace("<", "&lt;").replace(">", "&gt;");
-        lazy_static! {
-            static ref BOLD_RE: Regex = Regex::new(r"\*\*([^\*]+)\*\*").unwrap();
-            static ref ITALICS_RE: Regex = Regex::new(r"\*([^\*]+)\*").unwrap();
-            static ref MULTILINE_CODE_RE: Regex = Regex::new(r"```([^`]+)```").unwrap();
-            static ref INLINE_CODE_RE: Regex = Regex::new(r"`([^`]*)`").unwrap();
-        };
-        let content_cleaned = BOLD_RE.replace_all(&content_cleaned, |capts: &regex::Captures| {
-            format!("<b>{}</b>", &capts[1])
-        });
-        let content_cleaned = ITALICS_RE
-            .replace_all(&content_cleaned, |capts: &regex::Captures| {
-                format!("<i>{}</i>", &capts[1])
-            });
-
-        let content_cleaned = MULTILINE_CODE_RE
-            .replace_all(&content_cleaned, |capts: &regex::Captures| {
-                format!(r#"<pre class="pre pre--multiline">{}</pre>"#, &capts[1])
-            });
-
-        let content_cleaned = INLINE_CODE_RE
-            .replace_all(&content_cleaned, |capts: &regex::Captures| {
-                format!(r#"<code class="pre pre--inline">{}</code>"#, &capts[1])
-            });
+        let content_cleaned = clean_content(&message.content);
 
         let message_group = format!(
             r#"<div class="chatlog__message-group">
