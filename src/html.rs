@@ -2,9 +2,13 @@ use log::*;
 use std::fs;
 use std::path::Path;
 
+use lazy_static::lazy_static;
+
 use serenity::model::channel::Message;
 use serenity::model::user::User;
 use serenity::prelude::Context;
+
+use regex::Regex;
 
 use futures::future::join_all;
 
@@ -170,6 +174,19 @@ style="color: rgb({}, {}, {})">
             author_highest_role.map(|x| x.colour.b()).unwrap_or(255),
             author_nick_or_user,
         );
+
+        let content_cleaned = message.content.replace("<", "&lt;").replace(">", "&gt;");
+        lazy_static! {
+            static ref BOLD_RE: Regex = Regex::new(r"\*\*(.*)\*\*").unwrap();
+            static ref ITALICS_RE: Regex = Regex::new(r"\*(.*)\*").unwrap();
+        };
+        let content_cleaned = BOLD_RE.replace_all(&content_cleaned, |capts: &regex::Captures| {
+            format!("<b>{}</b>", &capts[1])
+        });
+        let content_cleaned = ITALICS_RE.replace_all(&content_cleaned, |capts: &regex::Captures| {
+            format!("<i>{}</i>", &capts[1])
+        });
+
         let message_group = format!(
             r#"<div class="chatlog__message-group">
 {}
@@ -193,7 +210,7 @@ style="color: rgb({}, {}, {})">
             message_timestamp,
             message.id.to_string(),
             message.id.to_string(),
-            message.content,
+            content_cleaned,
         );
         html.push_str(&message_group);
         trace!("Archived message {} / {}", i, messages.len());
