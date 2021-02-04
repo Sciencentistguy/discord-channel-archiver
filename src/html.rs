@@ -138,28 +138,42 @@ pub async fn write_html<P: AsRef<Path>>(
         }
     };
 
-    let clean_content = |content: &str| -> String {
+    let render_message = |content: &str| -> String {
         let content = content.replace("<", "&lt;").replace(">", "&gt;");
         lazy_static! {
-            static ref BOLD_RE: Regex = Regex::new(r"\*\*([^\*]+)\*\*").unwrap();
-            static ref ITALICS_RE: Regex = Regex::new(r"\*([^\*]+)\*").unwrap();
             static ref MULTILINE_CODE_RE: Regex = Regex::new(r"```([^`]+)```").unwrap();
             static ref INLINE_CODE_RE: Regex = Regex::new(r"`([^`]*)`").unwrap();
+            static ref BOLD_RE: Regex = Regex::new(r"\*\*([^\*]+)\*\*").unwrap();
+            static ref UNDERLINE_RE: Regex = Regex::new(r"__([^_]+)__").unwrap();
+            static ref ITALICS_RE: Regex = Regex::new(r"\*([^\*]+)\*").unwrap();
+            static ref ITALICS_RE2: Regex = Regex::new(r"_([^_]+)_").unwrap();
+            static ref STRIKETHROUGH_RE: Regex = Regex::new(r"~~([^~]+)~~").unwrap();
             static ref EMOJI_RE: Regex = Regex::new(r":(\w+):").unwrap();
         };
-        let content = BOLD_RE.replace_all(&content, |capts: &regex::Captures| {
-            format!("<b>{}</b>", &capts[1])
-        });
-        let content = ITALICS_RE.replace_all(&content, |capts: &regex::Captures| {
-            format!("<i>{}</i>", &capts[1])
-        });
-
         let content = MULTILINE_CODE_RE.replace_all(&content, |capts: &regex::Captures| {
             format!(r#"<pre class="pre pre--multiline">{}</pre>"#, &capts[1])
         });
-
         let content = INLINE_CODE_RE.replace_all(&content, |capts: &regex::Captures| {
             format!(r#"<code class="pre pre--inline">{}</code>"#, &capts[1])
+        });
+
+        let content = BOLD_RE.replace_all(&content, |capts: &regex::Captures| {
+            format!("<b>{}</b>", &capts[1])
+        });
+
+        let content = UNDERLINE_RE.replace_all(&content, |capts: &regex::Captures| {
+            format!("<u>{}</u>", &capts[1])
+        });
+
+        let content = ITALICS_RE.replace_all(&content, |capts: &regex::Captures| {
+            format!("<i>{}</i>", &capts[1])
+        });
+        let content = ITALICS_RE2.replace_all(&content, |capts: &regex::Captures| {
+            format!("<i>{}</i>", &capts[1])
+        });
+
+        let content = STRIKETHROUGH_RE.replace_all(&content, |capts: &regex::Captures| {
+            format!("<s>{}</s>", &capts[1])
         });
 
         let content = {
@@ -225,7 +239,7 @@ style="color: rgb({}, {}, {})">
             author_nick_or_user,
         );
 
-        let content_cleaned = clean_content(&message.content);
+        let content = render_message(&message.content);
 
         let message_group = format!(
             r#"<div class="chatlog__message-group">
@@ -250,7 +264,7 @@ style="color: rgb({}, {}, {})">
             message_timestamp,
             message.id.to_string(),
             message.id.to_string(),
-            content_cleaned,
+            content,
         );
         html.push_str(&message_group);
         trace!("Archived message {} / {}", i, messages.len());
