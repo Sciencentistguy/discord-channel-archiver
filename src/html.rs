@@ -141,7 +141,7 @@ pub async fn write_html<P: AsRef<Path>>(
     let render_message = |content: &str| -> String {
         let content = content.replace("<", "&lt;").replace(">", "&gt;");
         lazy_static! {
-            static ref MULTILINE_CODE_RE: Regex = Regex::new(r"```([^`]+)```").unwrap();
+            static ref CUSTOM_EMOJI_RE: Regex = Regex::new(r"&lt;a?:(\w+):(\d+)&gt;").unwrap();
             static ref INLINE_CODE_RE: Regex = Regex::new(r"`([^`]*)`").unwrap();
             static ref BOLD_RE: Regex = Regex::new(r"\*\*([^\*]+)\*\*").unwrap();
             static ref UNDERLINE_RE: Regex = Regex::new(r"__([^_]+)__").unwrap();
@@ -150,54 +150,78 @@ pub async fn write_html<P: AsRef<Path>>(
             static ref STRIKETHROUGH_RE: Regex = Regex::new(r"~~([^~]+)~~").unwrap();
             static ref EMOJI_RE: Regex = Regex::new(r":(\w+):").unwrap();
         };
-        let content = MULTILINE_CODE_RE.replace_all(&content, |capts: &regex::Captures| {
-            format!(r#"<pre class="pre pre--multiline">{}</pre>"#, &capts[1])
+
+        let content = CUSTOM_EMOJI_RE.replace_all(&content, |capts: &regex::Captures| {
+            trace!("Found custom emoji '{}' in '{}'", &capts[1], content);
+            //let emoji_id = &capts[2];
+            if let Some(emoji) = serenity::utils::parse_emoji(&capts[0]) {
+                format!(r#"<img src="{}" alt="{}"/>"#, emoji.url(), &capts[1])
+            } else {
+                capts[0].to_string()
+            }
+            //let emoji_symbol = match gh_emoji::get(emoji_name) {
+            //Some(x) => x,
+            //None => emoji_name,
+            //};
+            //emoji_symbol.to_string()
         });
+
+        let content = {
+            let content: String = content.into();
+            trace!("Found multiline code block in '{}'", content);
+            let mut out = String::new();
+            let split = content.split("```");
+            for (c, block) in split.enumerate() {
+                if c & 1 == 0 {
+                    out.push_str(block);
+                } else {
+                    out.push_str(r#"<pre class="pre pre--multiline">"#);
+                    out.push_str(block);
+                    out.push_str(r#"</pre>"#);
+                }
+            }
+            out
+        };
         let content = INLINE_CODE_RE.replace_all(&content, |capts: &regex::Captures| {
+            trace!("Found inline code block in '{}'", content);
             format!(r#"<code class="pre pre--inline">{}</code>"#, &capts[1])
         });
 
         let content = BOLD_RE.replace_all(&content, |capts: &regex::Captures| {
+            trace!("Found bold block in '{}'", content);
             format!("<b>{}</b>", &capts[1])
         });
 
         let content = UNDERLINE_RE.replace_all(&content, |capts: &regex::Captures| {
+            trace!("Found underline block in '{}'", content);
             format!("<u>{}</u>", &capts[1])
         });
 
         let content = ITALICS_RE.replace_all(&content, |capts: &regex::Captures| {
+            trace!("Found italics block in '{}'", content);
             format!("<i>{}</i>", &capts[1])
         });
         let content = ITALICS_RE2.replace_all(&content, |capts: &regex::Captures| {
+            trace!("Found italics 2 block in '{}'", content);
             format!("<i>{}</i>", &capts[1])
         });
 
         let content = STRIKETHROUGH_RE.replace_all(&content, |capts: &regex::Captures| {
+            trace!("Found strikethrough block in '{}'", content);
             format!("<s>{}</s>", &capts[1])
         });
 
-        let content = {
-            let mut content: String = content.into();
-            let mut emoji_replacements: Vec<(String, String)> = Vec::new();
+        let content = EMOJI_RE.replace_all(&content, |capts: &regex::Captures| {
+            trace!("Found emoji '{}' in '{}'", &capts[0], content);
+            let emoji_name = &capts[1];
+            let emoji_symbol = match gh_emoji::get(emoji_name) {
+                Some(x) => x,
+                None => emoji_name,
+            };
+            emoji_symbol.to_string()
+        });
 
-            let emoji_matches = EMOJI_RE.find_iter(&content);
-
-            for m in emoji_matches {
-                trace!("Found emoji {} in '{}'", m.as_str(), content);
-                let emoji_name = &content[m.start() + 1..m.end() - 1];
-                let emoji_symbol = match gh_emoji::get(emoji_name) {
-                    Some(x) => x,
-                    None => continue,
-                };
-                emoji_replacements.push((m.as_str().into(), emoji_symbol.into()));
-            }
-
-            for (from, to) in emoji_replacements {
-                content = content.replace(&from, &to);
-            }
-            content
-        };
-
+        let content: String = content.into();
         content
     };
 
