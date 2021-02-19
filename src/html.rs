@@ -153,17 +153,19 @@ pub async fn write_html<P: AsRef<Path>>(
 
         let content = CUSTOM_EMOJI_RE.replace_all(&content, |capts: &regex::Captures| {
             trace!("Found custom emoji '{}' in '{}'", &capts[1], content);
-            //let emoji_id = &capts[2];
-            if let Some(emoji) = serenity::utils::parse_emoji(&capts[0]) {
-                format!(r#"<img src="{}" alt="{}"/>"#, emoji.url(), &capts[1])
+            let emoji_mention = capts[0]
+                .to_string() // TODO this is an allocation that can probably be avoided
+                .replace("&lt;", "<")
+                .replace("&gt;", ">");
+            if let Some(emoji) = serenity::utils::parse_emoji(emoji_mention) {
+                format!(
+                    r#"<img class="emoji" src="{0:}" alt="{1:}" title="{1:}"/>"#,
+                    emoji.url(),
+                    &capts[1]
+                )
             } else {
                 capts[0].to_string()
             }
-            //let emoji_symbol = match gh_emoji::get(emoji_name) {
-            //Some(x) => x,
-            //None => emoji_name,
-            //};
-            //emoji_symbol.to_string()
         });
 
         let content = {
