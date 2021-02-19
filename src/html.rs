@@ -139,6 +139,8 @@ pub async fn write_html<P: AsRef<Path>>(
     };
 
     let render_message = |content: &str| -> String {
+        //TODO don't render mardown inside code blocks.
+
         let content = content.replace("<", "&lt;").replace(">", "&gt;");
         lazy_static! {
             static ref CUSTOM_EMOJI_RE: Regex = Regex::new(r"&lt;a?:(\w+):(\d+)&gt;").unwrap();
@@ -151,6 +153,7 @@ pub async fn write_html<P: AsRef<Path>>(
             static ref EMOJI_RE: Regex = Regex::new(r":(\w+):").unwrap();
         };
 
+        // Custom (non-unicode) emoji
         let content = CUSTOM_EMOJI_RE.replace_all(&content, |capts: &regex::Captures| {
             trace!("Found custom emoji '{}' in '{}'", &capts[1], content);
             let emoji_mention = capts[0]
@@ -168,6 +171,7 @@ pub async fn write_html<P: AsRef<Path>>(
             }
         });
 
+        // Code blocks
         let content = {
             let content: String = content.into();
             trace!("Found multiline code block in '{}'", content);
@@ -184,35 +188,44 @@ pub async fn write_html<P: AsRef<Path>>(
             }
             out
         };
+
+        // Inline code blocks
         let content = INLINE_CODE_RE.replace_all(&content, |capts: &regex::Captures| {
             trace!("Found inline code block in '{}'", content);
             format!(r#"<code class="pre pre--inline">{}</code>"#, &capts[1])
         });
 
+        // Bold (double asterisk)
         let content = BOLD_RE.replace_all(&content, |capts: &regex::Captures| {
             trace!("Found bold block in '{}'", content);
             format!("<b>{}</b>", &capts[1])
         });
 
+        // Underline (double underscore)
         let content = UNDERLINE_RE.replace_all(&content, |capts: &regex::Captures| {
             trace!("Found underline block in '{}'", content);
             format!("<u>{}</u>", &capts[1])
         });
 
+        // Italics (single asterisk)
         let content = ITALICS_RE.replace_all(&content, |capts: &regex::Captures| {
             trace!("Found italics block in '{}'", content);
             format!("<i>{}</i>", &capts[1])
         });
+
+        // Italics (single underscore)
         let content = ITALICS_RE2.replace_all(&content, |capts: &regex::Captures| {
             trace!("Found italics 2 block in '{}'", content);
             format!("<i>{}</i>", &capts[1])
         });
 
+        // Strikethrough (double tilde)
         let content = STRIKETHROUGH_RE.replace_all(&content, |capts: &regex::Captures| {
             trace!("Found strikethrough block in '{}'", content);
             format!("<s>{}</s>", &capts[1])
         });
 
+        // Emoji (unicode)
         let content = EMOJI_RE.replace_all(&content, |capts: &regex::Captures| {
             trace!("Found emoji '{}' in '{}'", &capts[0], content);
             let emoji_name = &capts[1];
@@ -223,8 +236,19 @@ pub async fn write_html<P: AsRef<Path>>(
             emoji_symbol.to_string()
         });
 
-        let content: String = content.into();
-        content
+        content.into()
+    };
+
+    let get_avatar_url = |author: &User| match author.avatar_url() {
+        Some(x) => x,
+        None => match author.discriminator % 5 {
+            0 | 5 => "https://discordapp.com/assets/6debd47ed13483642cf09e832ed0bc1b.png".into(),
+            1 | 6 => "https://discordapp.com/assets/322c936a8c8be1b803cd94861bdfa868.png".into(),
+            2 | 7 => "https://discordapp.com/assets/dd4dbc0016779df1378e7812eabaa04d.png".into(),
+            3 | 8 => "https://discordapp.com/assets/0e291f67c9274a1abdddeb3fd919cbaa.png".into(),
+            4 | 9 => "https://discordapp.com/assets/1cbd08c76f8af6dddce02c5138971129.png".into(),
+            _ => "".into(),
+        },
     };
 
     trace!("Begin saving messages");
@@ -235,13 +259,9 @@ pub async fn write_html<P: AsRef<Path>>(
 
         let author_avatar_container = format!(
             r#"<div class="chatlog__author-avatar-container">
-    <img
-        class="chatlog__author-avatar"
-        src="{}"
-        alt="Avatar"
-    />
+    <img class="chatlog__author-avatar" src="{}" alt="Avatar" title="Avatar" />
 </div>"#,
-            author.avatar_url().unwrap_or("".into())
+            get_avatar_url(&author)
         );
 
         let message_timestamp = format!(
@@ -250,12 +270,9 @@ pub async fn write_html<P: AsRef<Path>>(
         );
 
         let author_name_container = format!(
-            r#"<span
-class="chatlog__author-name"
-title="{}#{:04}"
-data-user-id="{}"
-style="color: rgb({}, {}, {})">
-{}</span>"#,
+            r#"<span class="chatlog__author-name" title="{}#{:04}" data-user-id="{}" style="color: rgb({}, {}, {})">
+    {}
+</span>"#,
             author.name,
             author.discriminator,
             author.id.to_string(),
