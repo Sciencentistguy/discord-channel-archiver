@@ -1,10 +1,13 @@
 use log::*;
+
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
 use lazy_static::lazy_static;
 
 use serenity::model::channel::Message;
+use serenity::model::guild::PartialGuild;
 use serenity::model::user::User;
 use serenity::prelude::Context;
 
@@ -33,6 +36,8 @@ pub async fn write_html<P: AsRef<Path>>(
         .unwrap();
 
     let guild = channel.guild_id.to_partial_guild(&ctx).await.unwrap();
+
+    let message_renderer = MessageRenderer::new(&ctx, &guild).await;
 
     let dark_mode = true;
     let html = include_str!("html_templates/preamble_template.html");
@@ -138,7 +143,119 @@ pub async fn write_html<P: AsRef<Path>>(
         }
     };
 
-    let render_message = |content: &str| -> String {
+    let get_avatar_url = |author: &User| match author.avatar_url() {
+        Some(x) => x,
+        None => match author.discriminator % 5 {
+            0 | 5 => "https://discordapp.com/assets/6debd47ed13483642cf09e832ed0bc1b.png".into(),
+            1 | 6 => "https://discordapp.com/assets/322c936a8c8be1b803cd94861bdfa868.png".into(),
+            2 | 7 => "https://discordapp.com/assets/dd4dbc0016779df1378e7812eabaa04d.png".into(),
+            3 | 8 => "https://discordapp.com/assets/0e291f67c9274a1abdddeb3fd919cbaa.png".into(),
+            4 | 9 => "https://discordapp.com/assets/1cbd08c76f8af6dddce02c5138971129.png".into(),
+            _ => "".into(),
+        },
+    };
+
+    trace!("Begin saving messages");
+    for (i, message) in messages.iter().enumerate() {
+        let author = &message.author;
+        let author_nick_or_user = get_name_used(&message.author);
+        let author_highest_role = get_highest_role(&message.author);
+
+        let author_avatar_container = format!(
+            r#"<div class="chatlog__author-avatar-container">
+    <img class="chatlog__author-avatar" src="{}" alt="Avatar" title="Avatar" />
+</div>"#,
+            get_avatar_url(&author)
+        );
+
+        let message_timestamp = format!(
+            r#"<span class="chatlog__timestamp">{}</span>"#,
+            message.timestamp
+        );
+
+        let author_name_container = format!(
+            r#"<span class="chatlog__author-name" title="{}#{:04}" data-user-id="{}" style="color: rgb({}, {}, {})">
+    {}
+</span>"#,
+            author.name,
+            author.discriminator,
+            author.id.to_string(),
+            author_highest_role.map(|x| x.colour.r()).unwrap_or(255),
+            author_highest_role.map(|x| x.colour.g()).unwrap_or(255),
+            author_highest_role.map(|x| x.colour.b()).unwrap_or(255),
+            author_nick_or_user,
+        );
+
+        let content = message_renderer.render_message(&message.content);
+
+        let message_group = format!(
+            r#"<div class="chatlog__message-group">
+{}
+<div class="chatlog__messages">
+{}
+{}
+
+<div
+  class="chatlog__message"
+  data-message-id="{}"
+  id="message-{}"
+>
+<div class="chatlog__content">
+<div class="markdown">{}</div>
+</div>
+</div>
+</div>
+</div>"#,
+            author_avatar_container,
+            author_name_container,
+            message_timestamp,
+            message.id.to_string(),
+            message.id.to_string(),
+            content,
+        );
+        html.push_str(&message_group);
+        trace!("Archived message {} / {}", i, messages.len());
+    }
+    trace!("Generated message html");
+
+    html.push_str(include_str!("html_templates/postamble_template.html"));
+
+    let html = html.replace(
+        "EXPORTED_MESSAGES_NUMBER",
+        &format!(
+            "Exported {} message{}",
+            messages.len(),
+            if messages.len() == 1 { "" } else { "s" }
+        ),
+    );
+
+    let html = html.replace("\u{feff}", "");
+
+    fs::write(path, html)?;
+
+    info!("HTML generation complete.");
+
+    Ok(())
+}
+
+struct MessageRenderer {
+    channel_names: HashMap<u64, String>,
+}
+
+impl MessageRenderer {
+    async fn new(ctx: &Context, guild: &PartialGuild) -> Self {
+        let mut channels_map = HashMap::new();
+        let channels = guild.channels(&ctx).await.expect("Failed to get channels");
+        for (id, channel) in channels {
+            channels_map.insert(id.into(), channel.name);
+        }
+
+        Self {
+            channel_names: channels_map,
+        }
+    }
+
+    fn render_message(&self, content: &str) -> String {
         //TODO don't render mardown inside code blocks.
 
         let content = content.replace("<", "&lt;").replace(">", "&gt;");
@@ -151,6 +268,7 @@ pub async fn write_html<P: AsRef<Path>>(
             static ref ITALICS_RE2: Regex = Regex::new(r"_([^_]+)_").unwrap();
             static ref STRIKETHROUGH_RE: Regex = Regex::new(r"~~([^~]+)~~").unwrap();
             static ref EMOJI_RE: Regex = Regex::new(r":(\w+):").unwrap();
+            static ref CHANNEL_MENTION_RE: Regex = Regex::new(r"&lt;#(\d+)&gt;").unwrap();
         };
 
         // Custom (non-unicode) emoji
@@ -236,100 +354,16 @@ pub async fn write_html<P: AsRef<Path>>(
             emoji_symbol.to_string()
         });
 
+        let mut content: String = content.into();
+
+        // Channel mentions
+        while let Some(m) = CHANNEL_MENTION_RE.find(&content) {
+            trace!("Found channel mention '{}' in '{}'", m.as_str(), &content);
+            let cid: u64 = content[m.start() + 5..m.end() - 4].parse().unwrap();
+            let name = self.channel_names.get(&cid).unwrap();
+            content = content.replace(m.as_str(), &format!("<span class=mention>#{}</span>", name));
+        }
+
         content.into()
-    };
-
-    let get_avatar_url = |author: &User| match author.avatar_url() {
-        Some(x) => x,
-        None => match author.discriminator % 5 {
-            0 | 5 => "https://discordapp.com/assets/6debd47ed13483642cf09e832ed0bc1b.png".into(),
-            1 | 6 => "https://discordapp.com/assets/322c936a8c8be1b803cd94861bdfa868.png".into(),
-            2 | 7 => "https://discordapp.com/assets/dd4dbc0016779df1378e7812eabaa04d.png".into(),
-            3 | 8 => "https://discordapp.com/assets/0e291f67c9274a1abdddeb3fd919cbaa.png".into(),
-            4 | 9 => "https://discordapp.com/assets/1cbd08c76f8af6dddce02c5138971129.png".into(),
-            _ => "".into(),
-        },
-    };
-
-    trace!("Begin saving messages");
-    for (i, message) in messages.iter().enumerate() {
-        let author = &message.author;
-        let author_nick_or_user = get_name_used(&message.author);
-        let author_highest_role = get_highest_role(&message.author);
-
-        let author_avatar_container = format!(
-            r#"<div class="chatlog__author-avatar-container">
-    <img class="chatlog__author-avatar" src="{}" alt="Avatar" title="Avatar" />
-</div>"#,
-            get_avatar_url(&author)
-        );
-
-        let message_timestamp = format!(
-            r#"<span class="chatlog__timestamp">{}</span>"#,
-            message.timestamp
-        );
-
-        let author_name_container = format!(
-            r#"<span class="chatlog__author-name" title="{}#{:04}" data-user-id="{}" style="color: rgb({}, {}, {})">
-    {}
-</span>"#,
-            author.name,
-            author.discriminator,
-            author.id.to_string(),
-            author_highest_role.map(|x| x.colour.r()).unwrap_or(255),
-            author_highest_role.map(|x| x.colour.g()).unwrap_or(255),
-            author_highest_role.map(|x| x.colour.b()).unwrap_or(255),
-            author_nick_or_user,
-        );
-
-        let content = render_message(&message.content);
-
-        let message_group = format!(
-            r#"<div class="chatlog__message-group">
-{}
-<div class="chatlog__messages">
-{}
-{}
-
-<div
-  class="chatlog__message"
-  data-message-id="{}"
-  id="message-{}"
->
-<div class="chatlog__content">
-<div class="markdown">{}</div>
-</div>
-</div>
-</div>
-</div>"#,
-            author_avatar_container,
-            author_name_container,
-            message_timestamp,
-            message.id.to_string(),
-            message.id.to_string(),
-            content,
-        );
-        html.push_str(&message_group);
-        trace!("Archived message {} / {}", i, messages.len());
     }
-    trace!("Generated message html");
-
-    html.push_str(include_str!("html_templates/postamble_template.html"));
-
-    let html = html.replace(
-        "EXPORTED_MESSAGES_NUMBER",
-        &format!(
-            "Exported {} message{}",
-            messages.len(),
-            if messages.len() == 1 { "" } else { "s" }
-        ),
-    );
-
-    let html = html.replace("\u{feff}", "");
-
-    fs::write(path, html)?;
-
-    info!("HTML generation complete.");
-
-    Ok(())
 }
