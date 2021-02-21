@@ -7,7 +7,9 @@ use std::path::Path;
 use lazy_static::lazy_static;
 
 use serenity::model::channel::Message;
+use serenity::model::guild::Member;
 use serenity::model::guild::PartialGuild;
+use serenity::model::guild::Role;
 use serenity::model::id::UserId;
 use serenity::model::user::User;
 use serenity::prelude::Context;
@@ -51,20 +53,6 @@ pub async fn write_html<P: AsRef<Path>>(
         .unwrap();
 
     let guild = channel.guild_id.to_partial_guild(&ctx).await.unwrap();
-
-    let mentioned_uids: Vec<UserId> = {
-        let mut out = Vec::new();
-        for message in messages.iter() {
-            for capt in USER_MENTION_UNSANITISED_RE.captures_iter(&message.content) {
-                out.push(capt[1].parse::<u64>().unwrap().into());
-            }
-        }
-        out.sort();
-        out.dedup();
-        out
-    };
-
-    let message_renderer = MessageRenderer::new(&ctx, &guild, &mentioned_uids).await?;
 
     let dark_mode = true;
     let html = include_str!("html_templates/preamble_template.html");
@@ -110,7 +98,7 @@ pub async fn write_html<P: AsRef<Path>>(
     };
     trace!("Generated preamble");
 
-    trace!("Begin getting members");
+    trace!("Begin getting channel members");
     let mut members: Vec<_> = messages.iter().map(|x| &x.author).collect();
     members.sort_by_key(|user| user.id);
     members.dedup();
@@ -126,56 +114,13 @@ pub async fn write_html<P: AsRef<Path>>(
         })
         .collect();
 
-    let member_userids: Vec<_> = members.iter().map(|x| x.user.id).collect();
-
-    let get_highest_role = |user: &User| {
-        trace!("Begin getting highest role for user {}", user.name);
-        //if !channel_members_users.iter().find(|x| x.).is_some();
-        if !member_userids.contains(&user.id) {
-            warn!("Message author found who is not a member of the channel");
-            return None;
-        }
-        let roles = match members.iter().find(|member| member.user.id == user.id) {
-            Some(x) => &x.roles,
-            None => {
-                warn!("User {} has no roles", user.name);
-                return None;
-            }
-        };
-
-        let mut roles: Vec<_> = roles
-            .iter()
-            .map(|roleid| guild.roles.get(&roleid).unwrap())
-            .collect();
-        roles.sort_by_key(|role| role.position);
-        match roles.last() {
-            Some(x) => Some(*x),
-            None => None,
-        }
-    };
-
-    let get_name_used = |user: &User| {
-        trace!("Begin getting name for user {}", user.name);
-        if !member_userids.contains(&user.id) {
-            warn!("Message author found who is not a member of the channel");
-            return user.name.clone();
-        }
-        match members
-            .iter()
-            .find(|member| member.user.id == user.id)
-            .unwrap()
-            .nick
-        {
-            Some(ref x) => x.clone(),
-            None => user.name.clone(),
-        }
-    };
+    let message_renderer = MessageRenderer::new(&ctx, &guild, members).await?;
 
     trace!("Begin saving messages");
     for (i, message) in messages.iter().enumerate() {
         let author = &message.author;
-        let author_nick_or_user = get_name_used(&message.author);
-        let author_highest_role = get_highest_role(&message.author);
+        let author_nick_or_user = message_renderer.get_name_used(&message.author);
+        let author_highest_role = message_renderer.get_highest_role(&guild, &message.author);
 
         let author_avatar_container = format!(
             r#"<div class="chatlog__author-avatar-container">
@@ -202,7 +147,9 @@ pub async fn write_html<P: AsRef<Path>>(
             author_nick_or_user,
         );
 
-        let content = message_renderer.render_message(&message.content);
+        let content = message_renderer
+            .render_message(&message.content, &ctx)
+            .await;
 
         let message_group = format!(
             r#"<div class="chatlog__message-group">
@@ -256,37 +203,43 @@ pub async fn write_html<P: AsRef<Path>>(
 
 struct MessageRenderer {
     channel_names: HashMap<u64, String>,
-    user_names: HashMap<u64, String>,
+    members: HashMap<UserId, Member>,
 }
 
 impl MessageRenderer {
     async fn new(
         ctx: &Context,
         guild: &PartialGuild,
-        mentioned_uids: &[UserId],
+        members: Vec<Member>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         trace!("Begin getting channel names");
         let mut channel_names = HashMap::new();
-        let mut channels = guild.channels(&ctx).await.expect("Failed to get channels");
+        let mut channels = guild.channels(&ctx).await?;
         for (id, channel) in channels.iter_mut() {
             channel_names.insert(*id.as_u64(), std::mem::take(&mut channel.name));
         }
 
-        trace!("Begin getting names for mentioned users");
-        trace!("Need to get names for {} users.", mentioned_uids.len());
-        let mut user_names: HashMap<u64, String> = HashMap::new();
-        for uid in mentioned_uids {
-            let name = uid.to_user(&ctx).await?.name;
-            trace!("Got name '{}' for user '{}'", name, uid.as_u64());
-            user_names.insert(*uid.as_u64(), name);
-        }
+        //trace!("Begin getting names for mentioned users");
+        //trace!("Need to get names for {} users.", mentioned_uids.len());
+        //let mut user_names: HashMap<u64, User> = HashMap::new();
+        //for uid in mentioned_uids {
+        //let name = uid.to_user(&ctx).await?;
+        //trace!("Got name '{}' for user '{}'", name, uid.as_u64());
+        //user_names.insert(*uid.as_u64(), name);
+        //}
+
+        let m: HashMap<_, _> = members
+            .into_iter()
+            .map(|member| (member.user.id, member))
+            .collect();
+
         Ok(Self {
             channel_names,
-            user_names,
+            members: m,
         })
     }
 
-    fn render_message(&self, content: &str) -> String {
+    async fn render_message(&self, content: &str, ctx: &Context) -> String {
         //TODO don't render mardown inside code blocks.
 
         let content = content.replace("<", "&lt;").replace(">", "&gt;");
@@ -390,20 +343,71 @@ impl MessageRenderer {
                 .parse::<u64>()
                 .unwrap()
                 .into();
-            let name = self.user_names.get(&uid.as_u64());
+            let member = self.members.get(&uid);
             content = content.replace(m.as_str(), {
                 &format!(
                     "<span class=mention>@{}</span>",
-                    if name.is_some() {
-                        name.unwrap().clone()
+                    if member.is_some() {
+                        get_member_nick(&member.unwrap()).to_string()
                     } else {
-                        uid.as_u64().to_string()
+                        ctx.http
+                            .get_user(*uid.as_u64())
+                            .await
+                            .map(|x| x.name)
+                            .unwrap_or(uid.as_u64().to_string())
                     }
                 )
             });
         }
-
         content.into()
+    }
+
+    fn get_name_used<'a>(&'a self, user: &'a User) -> &'a str {
+        trace!("Begin getting name for user {}", user.name);
+        if self.members.keys().find(|x| *x == &user.id).is_none() {
+            warn!("Message author found who is not a member of the channel");
+            return user.name.as_str();
+        }
+        match self
+            .members
+            .values()
+            .find(|member| member.user.id == user.id)
+            .unwrap()
+            .nick
+        {
+            Some(ref x) => x.as_str(),
+            None => user.name.as_str(),
+        }
+    }
+
+    fn get_highest_role<'a>(&self, guild: &'a PartialGuild, user: &User) -> Option<&'a Role> {
+        trace!("Begin getting highest role for user {}", user.name);
+        //if !channel_members_users.iter().find(|x| x.).is_some();
+        if self.members.keys().find(|x| *x == &user.id).is_none() {
+            warn!("Message author found who is not a member of the channel");
+            return None;
+        }
+        let roles = match self
+            .members
+            .values()
+            .find(|member| member.user.id == user.id)
+        {
+            Some(x) => &x.roles,
+            None => {
+                warn!("User {} has no roles", user.name);
+                return None;
+            }
+        };
+
+        let mut roles: Vec<_> = roles
+            .iter()
+            .map(|roleid| guild.roles.get(&roleid).unwrap())
+            .collect();
+        roles.sort_by_key(|role| role.position);
+        match roles.last() {
+            Some(x) => Some(*x),
+            None => None,
+        }
     }
 }
 
@@ -418,5 +422,12 @@ fn get_avatar_url(author: &User) -> String {
             4 | 9 => "https://discordapp.com/assets/1cbd08c76f8af6dddce02c5138971129.png".into(),
             _ => "".into(),
         },
+    }
+}
+
+fn get_member_nick<'a>(member: &'a Member) -> &'a str {
+    match member.nick {
+        Some(ref x) => x.as_str(),
+        None => member.user.name.as_str(),
     }
 }
