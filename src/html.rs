@@ -151,9 +151,20 @@ pub async fn write_html<P: AsRef<Path>>(
             author_nick_or_user,
         );
 
-        let content = message_renderer
+        let mut content = message_renderer
             .render_message(&message.content, &ctx)
             .await;
+
+        if !message.attachments.is_empty() {
+            for att in message.attachments.iter() {
+                trace!(
+                    "Found message attachment '{}' in message '{}'",
+                    att.url,
+                    message.content
+                );
+                content.push_str(&format!(r#"<a href="{0}">{0}</a>"#, att.url));
+            }
+        }
 
         let message_group = format!(
             r#"<div class="chatlog__message-group">
@@ -183,7 +194,7 @@ pub async fn write_html<P: AsRef<Path>>(
             content,
         );
         html.push_str(&message_group);
-        trace!("Archived message {} / {}", i, messages.len());
+        trace!("Archived message {} / {}", i + 1, messages.len());
     }
     trace!("Generated message html");
 
