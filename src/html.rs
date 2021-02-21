@@ -192,8 +192,6 @@ pub async fn write_html<P: AsRef<Path>>(
         ),
     );
 
-    let html = html.replace("\u{feff}", "");
-
     fs::write(path, html)?;
 
     info!("HTML generation complete.");
