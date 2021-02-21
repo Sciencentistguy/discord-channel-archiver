@@ -23,17 +23,21 @@ static DARK_THEME_CSS: &str = include_str!("html_templates/dark.css");
 static LIGHT_THEME_CSS: &str = include_str!("html_templates/light.css");
 
 lazy_static! {
-    static ref CUSTOM_EMOJI_RE: Regex = Regex::new(r"&lt;a?:(\w+):(\d+)&gt;").unwrap();
-    static ref INLINE_CODE_RE: Regex = Regex::new(r"`([^`]*)`").unwrap();
-    static ref BOLD_RE: Regex = Regex::new(r"\*\*([^\*]+)\*\*").unwrap();
-    static ref UNDERLINE_RE: Regex = Regex::new(r"__([^_]+)__").unwrap();
-    static ref ITALICS_RE: Regex = Regex::new(r"\*([^\*]+)\*").unwrap();
-    static ref ITALICS_RE2: Regex = Regex::new(r"_([^_]+)_").unwrap();
-    static ref STRIKETHROUGH_RE: Regex = Regex::new(r"~~([^~]+)~~").unwrap();
-    static ref EMOJI_RE: Regex = Regex::new(r":(\w+):").unwrap();
-    static ref CHANNEL_MENTION_RE: Regex = Regex::new(r"&lt;#(\d+)&gt;").unwrap();
-    static ref USER_MENTION_RE: Regex = Regex::new(r"&lt;@!(\d+)&gt;").unwrap();
-    static ref USER_MENTION_UNSANITISED_RE: Regex = Regex::new(r"<@!(\d+)>").unwrap();
+    static ref CUSTOM_EMOJI_REGEX: Regex = Regex::new(r"&lt;a?:(\w+):(\d+)&gt;").unwrap();
+    static ref INLINE_CODE_REGEX: Regex = Regex::new(r"`([^`]*)`").unwrap();
+    static ref BOLD_REGEX: Regex = Regex::new(r"\*\*([^\*]+)\*\*").unwrap();
+    static ref UNDERLINE_REGEX: Regex = Regex::new(r"__([^_]+)__").unwrap();
+    static ref ITALICS_REGEX: Regex = Regex::new(r"\*([^\*]+)\*").unwrap();
+    static ref ITALICS_REGEX2: Regex = Regex::new(r"_([^_]+)_").unwrap();
+    static ref STRIKETHROUGH_REGEX: Regex = Regex::new(r"~~([^~]+)~~").unwrap();
+    static ref EMOJI_REGEX: Regex = Regex::new(r":(\w+):").unwrap();
+    static ref CHANNEL_MENTION_REGEX: Regex = Regex::new(r"&lt;#(\d+)&gt;").unwrap();
+    static ref USER_MENTION_REGEX: Regex = Regex::new(r"&lt;@!(\d+)&gt;").unwrap();
+    static ref USER_MENTION_UNSANITISED_REGEX: Regex = Regex::new(r"<@!(\d+)>").unwrap();
+    static ref URL_REGEX: Regex = Regex::new(
+        r"https?://[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b[-a-zA-Z0-9()@:%_\+.~#?&//=]*"
+    )
+    .unwrap();
 }
 
 pub async fn write_html<P: AsRef<Path>>(
@@ -153,21 +157,23 @@ pub async fn write_html<P: AsRef<Path>>(
 
         let message_group = format!(
             r#"<div class="chatlog__message-group">
-{}
-<div class="chatlog__messages">
-{}
-{}
+    {}
+    <div class="chatlog__messages">
+        {}
+        {}
 
-<div
-  class="chatlog__message"
-  data-message-id="{}"
-  id="message-{}"
->
-<div class="chatlog__content">
-<div class="markdown">{}</div>
-</div>
-</div>
-</div>
+        <div
+          class="chatlog__message"
+          data-message-id="{}"
+          id="message-{}"
+        >
+            <div class="chatlog__content">
+                <div class="markdown">
+                    {}
+                </div>
+            </div>
+        </div>
+    </div>
 </div>"#,
             author_avatar_container,
             author_name_container,
@@ -240,10 +246,17 @@ impl MessageRenderer {
     async fn render_message(&self, content: &str, ctx: &Context) -> String {
         //TODO don't render mardown inside code blocks.
 
+        // Sanitise < and >
         let content = content.replace("<", "&lt;").replace(">", "&gt;");
 
+        // URLs
+        let content = URL_REGEX.replace_all(&content, |capts: &regex::Captures| {
+            trace!("Found URL '{}' in '{}'", &capts[0], &content);
+            format!(r#"<a href="{0}">{0}</a>"#, &capts[0])
+        });
+
         // Custom (non-unicode) emoji
-        let content = CUSTOM_EMOJI_RE.replace_all(&content, |capts: &regex::Captures| {
+        let content = CUSTOM_EMOJI_REGEX.replace_all(&content, |capts: &regex::Captures| {
             trace!("Found custom emoji '{}' in '{}'", &capts[1], content);
             let emoji_mention = capts[0]
                 .to_string() // TODO this is an allocation that can probably be avoided
@@ -279,43 +292,43 @@ impl MessageRenderer {
         };
 
         // Inline code blocks
-        let content = INLINE_CODE_RE.replace_all(&content, |capts: &regex::Captures| {
+        let content = INLINE_CODE_REGEX.replace_all(&content, |capts: &regex::Captures| {
             trace!("Found inline code block in '{}'", content);
             format!(r#"<code class="pre pre--inline">{}</code>"#, &capts[1])
         });
 
         // Bold (double asterisk)
-        let content = BOLD_RE.replace_all(&content, |capts: &regex::Captures| {
+        let content = BOLD_REGEX.replace_all(&content, |capts: &regex::Captures| {
             trace!("Found bold block in '{}'", content);
             format!("<b>{}</b>", &capts[1])
         });
 
         // Underline (double underscore)
-        let content = UNDERLINE_RE.replace_all(&content, |capts: &regex::Captures| {
+        let content = UNDERLINE_REGEX.replace_all(&content, |capts: &regex::Captures| {
             trace!("Found underline block in '{}'", content);
             format!("<u>{}</u>", &capts[1])
         });
 
         // Italics (single asterisk)
-        let content = ITALICS_RE.replace_all(&content, |capts: &regex::Captures| {
+        let content = ITALICS_REGEX.replace_all(&content, |capts: &regex::Captures| {
             trace!("Found italics block in '{}'", content);
             format!("<i>{}</i>", &capts[1])
         });
 
         // Italics (single underscore)
-        let content = ITALICS_RE2.replace_all(&content, |capts: &regex::Captures| {
+        let content = ITALICS_REGEX2.replace_all(&content, |capts: &regex::Captures| {
             trace!("Found italics 2 block in '{}'", content);
             format!("<i>{}</i>", &capts[1])
         });
 
         // Strikethrough (double tilde)
-        let content = STRIKETHROUGH_RE.replace_all(&content, |capts: &regex::Captures| {
+        let content = STRIKETHROUGH_REGEX.replace_all(&content, |capts: &regex::Captures| {
             trace!("Found strikethrough block in '{}'", content);
             format!("<s>{}</s>", &capts[1])
         });
 
         // Emoji (unicode)
-        let content = EMOJI_RE.replace_all(&content, |capts: &regex::Captures| {
+        let content = EMOJI_REGEX.replace_all(&content, |capts: &regex::Captures| {
             trace!("Found emoji '{}' in '{}'", &capts[0], content);
             let emoji_name = &capts[1];
             let emoji_symbol = match gh_emoji::get(emoji_name) {
@@ -325,17 +338,18 @@ impl MessageRenderer {
             emoji_symbol.to_string()
         });
 
+        // Channel mentions
+        let content = CHANNEL_MENTION_REGEX.replace_all(&content, |capts: &regex::Captures| {
+            trace!("Found channel mention '{}' in '{}'", &capts[0], &content);
+            let cid: u64 = capts[1].parse().unwrap();
+            let name = self.channel_names.get(&cid).unwrap();
+            format!("<span class=mention>#{}</span>", name)
+        });
+
         let mut content: String = content.into();
 
-        // Channel mentions
-        while let Some(m) = CHANNEL_MENTION_RE.find(&content) {
-            trace!("Found channel mention '{}' in '{}'", m.as_str(), &content);
-            let cid: u64 = content[m.start() + 5..m.end() - 4].parse().unwrap();
-            let name = self.channel_names.get(&cid).unwrap();
-            content = content.replace(m.as_str(), &format!("<span class=mention>#{}</span>", name));
-        }
-
-        while let Some(m) = USER_MENTION_RE.find(&content) {
+        // User mentions
+        while let Some(m) = USER_MENTION_REGEX.find(&content) {
             trace!("Found user mention '{}' in '{}'", m.as_str(), &content);
             let uid: serenity::model::id::UserId = content[m.start() + 6..m.end() - 4]
                 .parse::<u64>()
@@ -350,13 +364,14 @@ impl MessageRenderer {
                     } else {
                         ctx.http
                             .get_user(*uid.as_u64())
-                            .await
+                            .await // TODO make this synchronous somehow
                             .map(|x| x.name)
                             .unwrap_or(uid.as_u64().to_string())
                     }
                 )
             });
         }
+
         content.into()
     }
 
