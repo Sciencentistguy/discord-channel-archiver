@@ -287,13 +287,13 @@ impl MessageRenderer {
         // Code blocks
         let content = {
             let content: String = content.into();
-            trace!("Found multiline code block in '{}'", content);
             let mut out = String::new();
             let split = content.split("```");
             for (c, block) in split.enumerate() {
                 if c & 1 == 0 {
                     out.push_str(block);
                 } else {
+                    trace!("Found multiline code block '{}' in '{}'", block, content);
                     out.push_str(r#"<pre class="pre pre--multiline">"#);
                     out.push_str(block);
                     out.push_str(r#"</pre>"#);
