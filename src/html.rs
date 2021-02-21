@@ -8,6 +8,7 @@ use lazy_static::lazy_static;
 
 use serenity::model::channel::Message;
 use serenity::model::guild::PartialGuild;
+use serenity::model::id::UserId;
 use serenity::model::user::User;
 use serenity::prelude::Context;
 
@@ -18,6 +19,20 @@ use futures::future::join_all;
 static CORE_THEME_CSS: &str = include_str!("html_templates/core.css");
 static DARK_THEME_CSS: &str = include_str!("html_templates/dark.css");
 static LIGHT_THEME_CSS: &str = include_str!("html_templates/light.css");
+
+lazy_static! {
+    static ref CUSTOM_EMOJI_RE: Regex = Regex::new(r"&lt;a?:(\w+):(\d+)&gt;").unwrap();
+    static ref INLINE_CODE_RE: Regex = Regex::new(r"`([^`]*)`").unwrap();
+    static ref BOLD_RE: Regex = Regex::new(r"\*\*([^\*]+)\*\*").unwrap();
+    static ref UNDERLINE_RE: Regex = Regex::new(r"__([^_]+)__").unwrap();
+    static ref ITALICS_RE: Regex = Regex::new(r"\*([^\*]+)\*").unwrap();
+    static ref ITALICS_RE2: Regex = Regex::new(r"_([^_]+)_").unwrap();
+    static ref STRIKETHROUGH_RE: Regex = Regex::new(r"~~([^~]+)~~").unwrap();
+    static ref EMOJI_RE: Regex = Regex::new(r":(\w+):").unwrap();
+    static ref CHANNEL_MENTION_RE: Regex = Regex::new(r"&lt;#(\d+)&gt;").unwrap();
+    static ref USER_MENTION_RE: Regex = Regex::new(r"&lt;@!(\d+)&gt;").unwrap();
+    static ref USER_MENTION_UNSANITISED_RE: Regex = Regex::new(r"<@!(\d+)>").unwrap();
+}
 
 pub async fn write_html<P: AsRef<Path>>(
     messages: &[Message],
@@ -37,7 +52,19 @@ pub async fn write_html<P: AsRef<Path>>(
 
     let guild = channel.guild_id.to_partial_guild(&ctx).await.unwrap();
 
-    let message_renderer = MessageRenderer::new(&ctx, &guild).await;
+    let mentioned_uids: Vec<UserId> = {
+        let mut out = Vec::new();
+        for message in messages.iter() {
+            for capt in USER_MENTION_UNSANITISED_RE.captures_iter(&message.content) {
+                out.push(capt[1].parse::<u64>().unwrap().into());
+            }
+        }
+        out.sort();
+        out.dedup();
+        out
+    };
+
+    let message_renderer = MessageRenderer::new(&ctx, &guild, &mentioned_uids).await?;
 
     let dark_mode = true;
     let html = include_str!("html_templates/preamble_template.html");
@@ -82,6 +109,7 @@ pub async fn write_html<P: AsRef<Path>>(
         html.replace("CHANNEL_TOPIC_DIV", "")
     };
     trace!("Generated preamble");
+
     trace!("Begin getting members");
     let mut members: Vec<_> = messages.iter().map(|x| &x.author).collect();
     members.sort_by_key(|user| user.id);
@@ -141,18 +169,6 @@ pub async fn write_html<P: AsRef<Path>>(
             Some(ref x) => x.clone(),
             None => user.name.clone(),
         }
-    };
-
-    let get_avatar_url = |author: &User| match author.avatar_url() {
-        Some(x) => x,
-        None => match author.discriminator % 5 {
-            0 | 5 => "https://discordapp.com/assets/6debd47ed13483642cf09e832ed0bc1b.png".into(),
-            1 | 6 => "https://discordapp.com/assets/322c936a8c8be1b803cd94861bdfa868.png".into(),
-            2 | 7 => "https://discordapp.com/assets/dd4dbc0016779df1378e7812eabaa04d.png".into(),
-            3 | 8 => "https://discordapp.com/assets/0e291f67c9274a1abdddeb3fd919cbaa.png".into(),
-            4 | 9 => "https://discordapp.com/assets/1cbd08c76f8af6dddce02c5138971129.png".into(),
-            _ => "".into(),
-        },
     };
 
     trace!("Begin saving messages");
@@ -240,36 +256,40 @@ pub async fn write_html<P: AsRef<Path>>(
 
 struct MessageRenderer {
     channel_names: HashMap<u64, String>,
+    user_names: HashMap<u64, String>,
 }
 
 impl MessageRenderer {
-    async fn new(ctx: &Context, guild: &PartialGuild) -> Self {
-        let mut channels_map = HashMap::new();
-        let channels = guild.channels(&ctx).await.expect("Failed to get channels");
-        for (id, channel) in channels {
-            channels_map.insert(id.into(), channel.name);
+    async fn new(
+        ctx: &Context,
+        guild: &PartialGuild,
+        mentioned_uids: &[UserId],
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        trace!("Begin getting channel names");
+        let mut channel_names = HashMap::new();
+        let mut channels = guild.channels(&ctx).await.expect("Failed to get channels");
+        for (id, channel) in channels.iter_mut() {
+            channel_names.insert(*id.as_u64(), std::mem::take(&mut channel.name));
         }
 
-        Self {
-            channel_names: channels_map,
+        trace!("Begin getting names for mentioned users");
+        trace!("Need to get names for {} users.", mentioned_uids.len());
+        let mut user_names: HashMap<u64, String> = HashMap::new();
+        for uid in mentioned_uids {
+            let name = uid.to_user(&ctx).await?.name;
+            trace!("Got name '{}' for user '{}'", name, uid.as_u64());
+            user_names.insert(*uid.as_u64(), name);
         }
+        Ok(Self {
+            channel_names,
+            user_names,
+        })
     }
 
     fn render_message(&self, content: &str) -> String {
         //TODO don't render mardown inside code blocks.
 
         let content = content.replace("<", "&lt;").replace(">", "&gt;");
-        lazy_static! {
-            static ref CUSTOM_EMOJI_RE: Regex = Regex::new(r"&lt;a?:(\w+):(\d+)&gt;").unwrap();
-            static ref INLINE_CODE_RE: Regex = Regex::new(r"`([^`]*)`").unwrap();
-            static ref BOLD_RE: Regex = Regex::new(r"\*\*([^\*]+)\*\*").unwrap();
-            static ref UNDERLINE_RE: Regex = Regex::new(r"__([^_]+)__").unwrap();
-            static ref ITALICS_RE: Regex = Regex::new(r"\*([^\*]+)\*").unwrap();
-            static ref ITALICS_RE2: Regex = Regex::new(r"_([^_]+)_").unwrap();
-            static ref STRIKETHROUGH_RE: Regex = Regex::new(r"~~([^~]+)~~").unwrap();
-            static ref EMOJI_RE: Regex = Regex::new(r":(\w+):").unwrap();
-            static ref CHANNEL_MENTION_RE: Regex = Regex::new(r"&lt;#(\d+)&gt;").unwrap();
-        };
 
         // Custom (non-unicode) emoji
         let content = CUSTOM_EMOJI_RE.replace_all(&content, |capts: &regex::Captures| {
@@ -364,6 +384,39 @@ impl MessageRenderer {
             content = content.replace(m.as_str(), &format!("<span class=mention>#{}</span>", name));
         }
 
+        while let Some(m) = USER_MENTION_RE.find(&content) {
+            trace!("Found user mention '{}' in '{}'", m.as_str(), &content);
+            let uid: serenity::model::id::UserId = content[m.start() + 6..m.end() - 4]
+                .parse::<u64>()
+                .unwrap()
+                .into();
+            let name = self.user_names.get(&uid.as_u64());
+            content = content.replace(m.as_str(), {
+                &format!(
+                    "<span class=mention>@{}</span>",
+                    if name.is_some() {
+                        name.unwrap().clone()
+                    } else {
+                        uid.as_u64().to_string()
+                    }
+                )
+            });
+        }
+
         content.into()
+    }
+}
+
+fn get_avatar_url(author: &User) -> String {
+    match author.avatar_url() {
+        Some(x) => x,
+        None => match author.discriminator % 5 {
+            0 | 5 => "https://discordapp.com/assets/6debd47ed13483642cf09e832ed0bc1b.png".into(),
+            1 | 6 => "https://discordapp.com/assets/322c936a8c8be1b803cd94861bdfa868.png".into(),
+            2 | 7 => "https://discordapp.com/assets/dd4dbc0016779df1378e7812eabaa04d.png".into(),
+            3 | 8 => "https://discordapp.com/assets/0e291f67c9274a1abdddeb3fd919cbaa.png".into(),
+            4 | 9 => "https://discordapp.com/assets/1cbd08c76f8af6dddce02c5138971129.png".into(),
+            _ => "".into(),
+        },
     }
 }
