@@ -23,7 +23,7 @@ static DARK_THEME_CSS: &str = include_str!("html_templates/dark.css");
 static LIGHT_THEME_CSS: &str = include_str!("html_templates/light.css");
 
 lazy_static! {
-    static ref CUSTOM_EMOJI_REGEX: Regex = Regex::new(r"&lt;a?:(\w+):(\d+)&gt;").unwrap();
+    static ref CUSTOM_EMOJI_REGEX: Regex = Regex::new(r"(\\?)&lt;(a?):(\w+):(\d+)&gt;").unwrap();
     static ref INLINE_CODE_REGEX: Regex = Regex::new(r"`([^`]*)`").unwrap();
     static ref BOLD_REGEX: Regex = Regex::new(r"\*\*([^\*]+)\*\*").unwrap();
     static ref UNDERLINE_REGEX: Regex = Regex::new(r"__([^_]+)__").unwrap();
@@ -268,20 +268,23 @@ impl MessageRenderer {
 
         // Custom (non-unicode) emoji
         let content = CUSTOM_EMOJI_REGEX.replace_all(&content, |capts: &regex::Captures| {
-            trace!("Found custom emoji '{}' in '{}'", &capts[1], content);
-            let emoji_mention = capts[0]
-                .to_string() // TODO this is an allocation that can probably be avoided
-                .replace("&lt;", "<")
-                .replace("&gt;", ">");
-            if let Some(emoji) = serenity::utils::parse_emoji(emoji_mention) {
-                format!(
-                    r#"<img class="emoji" src="{0:}" alt="{1:}" title="{1:}"/>"#,
-                    emoji.url(),
-                    &capts[1]
-                )
-            } else {
-                capts[0].to_string()
+            if &capts[1] == r"\" {
+                return capts[0][1..capts[0].len()].replace(":", "&#58;");
             }
+            let animated = &capts[2] == "a";
+            let name = &capts[3];
+            let id = &capts[4];
+
+            trace!("Found custom emoji '{}' in '{}'", name, content);
+            let url = match animated {
+                true => format!("https://cdn.discordapp.com/emojis/{}.gif", id),
+                false => format!("https://cdn.discordapp.com/emojis/{}.png", id),
+            };
+
+            format!(
+                r#"<img class="emoji" src="{0:}" alt="{1:}" title="{1:}"/>"#,
+                url, &capts[1]
+            )
         });
 
         // Code blocks
