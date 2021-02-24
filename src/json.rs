@@ -8,46 +8,46 @@ use serenity::model::channel::Message;
 use serenity::prelude::Context;
 
 #[derive(Serialize, Deserialize, Debug)]
-struct GuildJson {
-    id: String,
-    name: String,
+struct GuildJson<'a> {
+    id: u64,
+    name: &'a str,
     icon_url: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-struct ChannelJson {
-    id: String,
+struct ChannelJson<'a> {
+    id: u64,
     category: Option<String>,
-    name: String,
-    topic: Option<String>,
+    name: &'a str,
+    topic: Option<&'a str>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-struct UserJson {
-    id: String,
-    name: String,
-    tag: String,
+struct UserJson<'a> {
+    id: u64,
+    name: &'a str,
+    discriminator: u16,
     is_bot: bool,
     avatar_url: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-struct AttachmentJson {
-    id: String,
-    url: String,
-    file_name: String,
+struct AttachmentJson<'a> {
+    id: u64,
+    url: &'a str,
+    file_name: &'a str,
     file_size_bytes: u64,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-struct MessageJson {
-    id: String,
-    timestamp: String,
-    timestamp_edited: Option<String>,
+struct MessageJson<'a> {
+    id: u64,
+    timestamp: i64,
+    timestamp_edited: Option<i64>,
     is_pinned: bool,
-    content: String,
-    author: UserJson,
-    attachments: Vec<AttachmentJson>,
+    content: &'a str,
+    author: UserJson<'a>,
+    attachments: Vec<AttachmentJson<'a>>,
 }
 
 pub async fn write_json<P: AsRef<Path>>(
@@ -56,33 +56,30 @@ pub async fn write_json<P: AsRef<Path>>(
     ctx: &Context,
 ) -> Result<(), Box<dyn std::error::Error>> {
     trace!("Entered json writer.");
-    let channel = match (&messages)
+    let channel = messages
         .first()
         .unwrap()
         .channel(&ctx)
         .await
         .unwrap()
         .guild()
-    {
-        Some(x) => x,
-        None => return Err("Invalid channel type.".into()),
-    };
+        .unwrap();
     let guild = channel.guild_id.to_partial_guild(&ctx).await?;
 
     let guild_json = GuildJson {
-        id: guild.id.to_string(),
+        id: *guild.id.as_u64(),
         icon_url: (&guild).icon_url(),
-        name: guild.name,
+        name: guild.name.as_str(),
     };
 
     let channel_json = ChannelJson {
-        id: channel.id.to_string(),
+        id: *channel.id.as_u64(),
         category: match channel.category_id {
             Some(x) => x.name(&ctx).await,
             None => None,
         },
-        name: channel.name().into(),
-        topic: channel.topic,
+        name: channel.name(),
+        topic: channel.topic.as_deref(),
     };
 
     let message_jsons: Vec<MessageJson> = messages
@@ -92,15 +89,15 @@ pub async fn write_json<P: AsRef<Path>>(
             let author = &message.author;
             trace!("Archived message {} / {}", i, messages.len());
             MessageJson {
-                id: message.id.to_string(),
-                timestamp: message.timestamp.to_string(),
-                timestamp_edited: message.edited_timestamp.map(|x| x.to_string()),
+                id: *message.id.as_u64(),
+                timestamp: message.timestamp.timestamp(),
+                timestamp_edited: message.edited_timestamp.map(|x| x.timestamp()),
                 is_pinned: message.pinned,
-                content: message.content.clone(),
+                content: message.content.as_str(),
                 author: UserJson {
-                    id: author.id.to_string(),
-                    name: author.name.clone(),
-                    tag: format!("{:04}", author.discriminator),
+                    id: *author.id.as_u64(),
+                    name: author.name.as_str(),
+                    discriminator: author.discriminator,
                     is_bot: author.bot,
                     avatar_url: author.avatar_url(),
                 },
@@ -108,9 +105,9 @@ pub async fn write_json<P: AsRef<Path>>(
                     .attachments
                     .iter()
                     .map(|x| AttachmentJson {
-                        id: x.id.to_string(),
-                        url: x.url.clone(),
-                        file_name: x.filename.clone(),
+                        id: *x.id.as_u64(),
+                        url: x.url.as_str(),
+                        file_name: x.filename.as_str(),
                         file_size_bytes: x.size,
                     })
                     .collect(),
