@@ -16,6 +16,10 @@ use structopt::StructOpt;
 
 static PATH: &str = "/dev/shm";
 
+lazy_static! {
+    static ref COMMAND_REGEX: Regex = Regex::new(r"^!archive +<#(\d+)> *([\w,]+)?$").unwrap();
+}
+
 #[tokio::main]
 async fn main() {
     // Set default log level to info unless otherwise specified.
@@ -63,39 +67,39 @@ struct ArchivalMode {
     html: bool,
 }
 
+impl std::fmt::Display for ArchivalMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "json: {}, html: {}", self.json, self.html)
+    }
+}
+
 #[async_trait]
 impl EventHandler for Handler {
     async fn message(&self, ctx: Context, msg: Message) {
         if msg.content.starts_with("!archive") {
-            lazy_static! {
-                static ref RE: Regex = Regex::new(r"^!archive +<#(\d+)> *([\w,]+)?$").unwrap();
-            }
-
-            let capts = RE.captures(&msg.content);
+            let capts = COMMAND_REGEX.captures(&msg.content);
             if capts.as_ref().map(|x| x.get(0)).is_none() {
-                msg.reply(&ctx, "Invalid syntax.\nCorrect usage is `!archive <channel> [mode(s)]`, where `<channel>` is the channel you want to archive, and `[mode(s)]` is a possibly comma-separated list of modes.\nValid modes are: `json,html`. All modes are enabled if this parameter is omitted.").await.expect("Failed to reply to message.");
+                msg.reply(&ctx,
+                    r#"Invalid syntax.
+Correct usage is `!archive <channel> [mode(s)]`, where `<channel>` is the channel you want to archive, and `[mode(s)]` is a possibly comma-separated list of modes.
+Valid modes are: `json,html`. All modes are enabled if this parameter is omitted."#).await.expect("Failed to reply to message.");
                 info!("Invalid archive command supplied: '{}'", &msg.content);
                 return;
             }
             let capts = capts.unwrap();
-            let channel_id_str = capts.get(1).unwrap().as_str();
+            let channel_id_str = &capts[1];
             let modes = match capts
                 .get(2)
                 .map(|x| x.as_str().split(',').collect::<Vec<_>>())
             {
-                Some(x) => x,
-                None => vec!["all"],
-            };
-            let modes = if modes.contains(&"all") {
-                ArchivalMode {
+                Some(x) => ArchivalMode {
+                    json: x.contains(&"json"),
+                    html: x.contains(&"html"),
+                },
+                None => ArchivalMode {
                     json: true,
                     html: true,
-                }
-            } else {
-                ArchivalMode {
-                    json: modes.contains(&"json"),
-                    html: modes.contains(&"html"),
-                }
+                },
             };
             trace!("Command parsed");
 
@@ -113,33 +117,36 @@ impl EventHandler for Handler {
             .expect("Channel not found")
             .guild()
             .expect("Invalid channel type");
-            let channel_name = channel.name;
-            let guild_name = {
-                let guild = channel.guild_id.to_partial_guild(&ctx).await.unwrap();
-                guild.name
-            };
+            let guild = channel.guild_id.to_partial_guild(&ctx).await.unwrap();
+
             info!(
-                "Archive started by user {} in channel {}, with modes {:?}",
-                msg.author,
-                channel.id.to_string(),
+                "Archive started by user '{}#{:04}' in guild '{}', in channel '{}', with modes '{}'",
+                msg.author.name,
+                msg.author.discriminator,
+                guild.name,
+                channel.name,
                 modes
             );
-            let mut messages: Vec<Message> = Vec::new();
-            let mut x = 100;
-            while x == 100 {
-                let last_msg = (&messages).last().unwrap_or(&msg);
-                let new_msgs = channel
-                    .id
-                    .messages(&ctx, |retreiver| retreiver.before(last_msg.id).limit(100))
-                    .await
-                    .expect("Failed getting messages");
-                x = new_msgs.len();
-                messages.extend(new_msgs.into_iter());
-            }
-            messages.reverse();
-            let messages = messages; // messages is a Vec<Message>, in order from oldest to newest
-            trace!("Messages downloaded");
-            let output_filename = format!("{}/{}-{}", PATH, guild_name, channel_name);
+            trace!("Begin downloading messages");
+            let messages = {
+                let mut messages: Vec<Message> = Vec::new();
+                let mut x = 100;
+                while x == 100 {
+                    let last_msg = (&messages).last().unwrap_or(&msg);
+                    let new_msgs = channel
+                        .id
+                        .messages(&ctx, |retreiver| retreiver.before(last_msg.id).limit(100))
+                        .await
+                        .expect("Failed getting messages");
+                    x = new_msgs.len();
+                    messages.extend(new_msgs.into_iter());
+                }
+                messages.reverse();
+                messages
+            };
+            trace!("{} messages downloaded", messages.len());
+
+            let output_filename = format!("{}/{}-{}", PATH, guild.name, channel.name);
 
             let mut created_files: Vec<String> = Vec::new();
             if modes.json {
@@ -150,6 +157,7 @@ impl EventHandler for Handler {
                 }
                 created_files.push(filename);
             }
+
             if modes.html {
                 let filename = format!("{}.html", output_filename);
                 match html::write_html(&messages, &filename, &ctx).await {
@@ -160,17 +168,13 @@ impl EventHandler for Handler {
             }
 
             info!("Archive complete.");
+
             msg.reply(
                 &ctx,
-                format!("Done!\nCreated files:\n```\n{}\n```", {
-                    let mut outreply = String::new();
-                    for file in created_files {
-                        outreply.push_str(&file);
-                        outreply.push('\n');
-                    }
-                    outreply.truncate(outreply.trim_end().len());
-                    outreply
-                }),
+                format!(
+                    "Done!\nCreated files:\n```\n{}\n```",
+                    created_files.join("\n")
+                ),
             )
             .await
             .expect("Failed to reply to message.");
