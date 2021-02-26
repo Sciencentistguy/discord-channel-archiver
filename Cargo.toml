@@ -19,6 +19,7 @@ serde = "1.0.120"
 serde_json = "1.0"
 structopt = "0.3"
 tokio = {version = "1.0", features = ["macros", "rt-multi-thread"]}
+text_io = "0.1.8"
 
 [dependencies.serenity]
 default-features=false

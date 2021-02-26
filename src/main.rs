@@ -1,18 +1,25 @@
 mod html;
 mod json;
 
-use std::env;
 use std::str::FromStr;
+use std::{env, io::Write};
 
+use futures::future::join_all;
 use lazy_static::lazy_static;
 use log::*;
 use regex::Regex;
 use serenity::{
     async_trait,
-    model::{channel::Message, gateway::Ready, id::ChannelId},
+    model::{
+        channel::{GuildChannel, Message},
+        gateway::Ready,
+        guild::PartialGuild,
+        id::ChannelId,
+    },
     prelude::*,
 };
 use structopt::StructOpt;
+use text_io::read;
 
 static PATH: &str = "/dev/shm";
 
@@ -59,59 +66,19 @@ async fn main() {
     }
 }
 
-async fn archive(ctx: &Context, cmd: &Message) {
-    let capts = COMMAND_REGEX.captures(&cmd.content);
-    if capts.as_ref().map(|x| x.get(0)).is_none() {
-        cmd.reply(&ctx,
-                    r#"Invalid syntax.
-Correct usage is `!archive <channel> [mode(s)]`, where `<channel>` is the channel you want to archive, and `[mode(s)]` is a possibly comma-separated list of modes.
-Valid modes are: `json,html`. All modes are enabled if this parameter is omitted."#).await.expect("Failed to reply to message.");
-        info!("Invalid archive command supplied: '{}'", &cmd.content);
-        return;
-    }
-    let capts = capts.unwrap();
-    let channel_id_str = &capts[1];
-    let modes = match capts
-        .get(2)
-        .map(|x| x.as_str().split(',').collect::<Vec<_>>())
-    {
-        Some(x) => ArchivalMode {
-            json: x.contains(&"json"),
-            html: x.contains(&"html"),
-        },
-        None => ArchivalMode {
-            json: true,
-            html: true,
-        },
-    };
-    trace!("Command parsed");
-
-    let channel = match ChannelId::from_str(channel_id_str) {
-        Ok(x) => x,
-        Err(_) => {
-            cmd.reply(&ctx, format!("Invalid channel id {}.", channel_id_str))
-                .await
-                .expect("Failed to reply to message");
-            return;
-        }
-    }
-    .to_channel(&ctx)
-    .await
-    .expect("Channel not found")
-    .guild()
-    .expect("Invalid channel type");
-    let guild = channel.guild_id.to_partial_guild(&ctx).await.unwrap();
-
-    info!(
-        "Archive started by user '{}#{:04}' in guild '{}', in channel '{}', with modes '{}'",
-        cmd.author.name, cmd.author.discriminator, guild.name, channel.name, modes
-    );
+async fn archive(
+    ctx: &Context,
+    channel: &GuildChannel,
+    guild: &PartialGuild,
+    modes: ArchivalMode,
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     trace!("Begin downloading messages");
     let messages = {
         let mut messages: Vec<Message> = Vec::new();
+        messages = channel.messages(&ctx, |r| r.limit(100)).await.unwrap();
         let mut x = 100;
         while x == 100 {
-            let last_msg = (&messages).last().unwrap_or(&cmd);
+            let last_msg = (&messages).last().unwrap();
             let new_msgs = channel
                 .id
                 .messages(&ctx, |retreiver| retreiver.before(last_msg.id).limit(100))
@@ -147,16 +114,7 @@ Valid modes are: `json,html`. All modes are enabled if this parameter is omitted
     }
 
     info!("Archive complete.");
-
-    cmd.reply(
-        &ctx,
-        format!(
-            "Done!\nCreated files:\n```\n{}\n```",
-            created_files.join("\n")
-        ),
-    )
-    .await
-    .expect("Failed to reply to message.");
+    Ok(created_files)
 }
 
 struct Handler;
@@ -177,7 +135,61 @@ impl std::fmt::Display for ArchivalMode {
 impl EventHandler for Handler {
     async fn message(&self, ctx: Context, msg: Message) {
         if msg.content.starts_with("!archive") {
-            archive(&ctx, &msg).await;
+            let capts = COMMAND_REGEX.captures(&msg.content);
+            if capts.as_ref().map(|x| x.get(0)).is_none() {
+                msg.reply(&ctx,
+                    r#"Invalid syntax.
+Correct usage is `!archive <channel> [mode(s)]`, where `<channel>` is the channel you want to archive, and `[mode(s)]` is a possibly comma-separated list of modes.
+Valid modes are: `json,html`. All modes are enabled if this parameter is omitted."#).await.expect("Failed to reply to message.");
+                info!("Invalid archive command supplied: '{}'", &msg.content);
+                return;
+            }
+            let capts = capts.unwrap();
+            let channel_id_str = &capts[1];
+            let modes = match capts
+                .get(2)
+                .map(|x| x.as_str().split(',').collect::<Vec<_>>())
+            {
+                Some(x) => ArchivalMode {
+                    json: x.contains(&"json"),
+                    html: x.contains(&"html"),
+                },
+                None => ArchivalMode {
+                    json: true,
+                    html: true,
+                },
+            };
+            trace!("Command parsed");
+
+            let channel = match ChannelId::from_str(channel_id_str) {
+                Ok(x) => x,
+                Err(_) => {
+                    msg.reply(&ctx, format!("Invalid channel id {}.", channel_id_str))
+                        .await
+                        .expect("Failed to reply to message");
+                    return;
+                }
+            }
+            .to_channel(&ctx)
+            .await
+            .expect("Channel not found")
+            .guild()
+            .expect("Invalid channel type");
+            let guild = channel.guild_id.to_partial_guild(&ctx).await.unwrap();
+
+            info!( "Archive started by user '{}#{:04}' in guild '{}', in channel '{}', with modes '{}'", msg.author.name, msg.author.discriminator, guild.name, channel.name, modes);
+
+            let created_files = archive(&ctx, &channel, &guild, modes).await.unwrap();
+
+            msg.reply(
+                &ctx,
+                format!(
+                    "Done!\nCreated files:\n```\n{}\n```",
+                    created_files.join("\n")
+                ),
+            )
+            .await
+            .expect("Failed to reply to message.");
         }
     }
 
@@ -185,10 +197,94 @@ impl EventHandler for Handler {
     // shard is booted, and a READY payload is sent by Discord. This payload
     // contains data like the current user's guild Ids, current user data,
     // private channels, and more.
-    //
-    // In this case, just print what the current user's username is.
-    async fn ready(&self, _: Context, ready: Ready) {
-        info!("{} is connected!", ready.user.name);
+    async fn ready(&self, ctx: Context, ready: Ready) {
+        info!(
+            "Bot logged in with username {} to {} guilds!",
+            ready.user.name,
+            ready.guilds.len()
+        );
+        loop {
+            let guilds: Vec<_> = ready
+                .guilds
+                .iter()
+                .map(|g| g.id().to_partial_guild(&ctx))
+                .collect();
+            let guilds: Vec<_> = join_all(guilds)
+                .await
+                .into_iter()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+
+            println!("Please select a guild:");
+            println!(" 0 - exit menu");
+            for (i, guild) in guilds.iter().enumerate() {
+                println!("{:2} - {}", i + 1, guild.name);
+            }
+            print!(">> ");
+            std::io::stdout().lock().flush().unwrap();
+            let guild = {
+                let sel: usize = match text_io::try_read!("{}\n") {
+                    Ok(x) => x,
+                    Err(_) => {
+                        return;
+                    }
+                };
+                if sel == 0 {
+                    return;
+                }
+                &guilds[sel - 1]
+            };
+            println!("Selected '{}'", guild.name);
+
+            let channels: Vec<_> = guild
+                .channels(&ctx)
+                .await
+                .unwrap()
+                .into_iter()
+                .filter_map(|(_, channel)| {
+                    use serenity::model::channel::ChannelType::*;
+                    match channel.kind {
+                        Text => Some(channel),
+                        _ => None,
+                    }
+                })
+                .collect();
+
+            println!("Please select a channel:");
+            for (i, channel) in channels.iter().enumerate() {
+                println!(
+                    "{:2} - #{}{}",
+                    i,
+                    channel.name,
+                    if channel.category_id.is_some() {
+                        format!(
+                            " in ({:?})",
+                            channel
+                                .category_id
+                                .unwrap()
+                                .to_channel(&ctx)
+                                .await
+                                .unwrap()
+                                .guild()
+                                .map(|x| x.name)
+                        )
+                    } else {
+                        "".into()
+                    }
+                );
+            }
+            print!(">> ");
+            std::io::stdout().lock().flush().unwrap();
+            let channel = {
+                let sel: usize = read!("{}\n");
+                &channels[sel]
+            };
+            let modes = ArchivalMode {
+                json: true,
+                html: true,
+            };
+            archive(&ctx, &channel, &guild, modes).await.unwrap();
+        }
     }
 }
 
