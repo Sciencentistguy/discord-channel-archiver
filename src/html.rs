@@ -296,7 +296,8 @@ impl MessageRenderer {
 
         // Code blocks
         let content = {
-            let content: String = content.into();
+            let content: String = content.replace("```<br>", "```");
+            
             let mut out = String::new();
             out.reserve(2000 * std::mem::size_of::<char>()); // Maximum length of a discord message is 2000 characters.
             let split = content.split("```");
@@ -405,7 +406,7 @@ impl MessageRenderer {
         trace!("Rendered message. Took {}ns", (end - start).as_nanos());
 
         // This is either needed or not needed depending on what the last rendering step is
-        #[allow(clippy::clippy::useless_conversion)]
+        #[allow(clippy::useless_conversion)]
         content.into()
     }
 
