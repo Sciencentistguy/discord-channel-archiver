@@ -73,7 +73,7 @@ pub async fn write_html<P: AsRef<Path>>(
 
     let html = html.replace(
         "DISCORD_GUILD_ICON_URL",
-        &guild.icon_url().unwrap_or("".into()),
+        &guild.icon_url().unwrap_or_else(|| "".into()),
     );
 
     let category_name = match channel.category_id {
@@ -81,13 +81,14 @@ pub async fn write_html<P: AsRef<Path>>(
         None => None,
     };
 
-    let html = html.replace(
-        "DISCORD_CHANNEL_CATEGORY_SLASH_NAME",
-        &match category_name {
-            Some(x) => format!("{} / {}", x, channel.name,),
-            None => channel.name.clone(),
-        },
-    );
+    let html = if category_name.is_some() {
+        html.replace(
+            "DISCORD_CHANNEL_CATEGORY_SLASH_NAME",
+            format!("{} / {}", category_name.unwrap(), channel.name).as_str(),
+        )
+    } else {
+        html.replace("DISCORD_CHANNEL_CATEGORY_SLASH_NAME", channel.name.as_str())
+    };
 
     let mut html = if channel.topic.is_some() {
         html.replace(
@@ -255,10 +256,15 @@ impl MessageRenderer {
     }
 
     async fn render_message(&self, content: &str, ctx: &Context) -> String {
+        trace!("Rendering message:\n{}.", content);
+        let start = std::time::Instant::now();
         //TODO don't render mardown inside code blocks.
 
         // Sanitise < and >
         let content = content.replace("<", "&lt;").replace(">", "&gt;");
+
+        // HTML doesn't respect newlines, it needs <br>
+        let content = content.replace("\n", "<br>");
 
         // URLs
         let content = URL_REGEX.replace_all(&content, |capts: &regex::Captures| {
@@ -271,6 +277,7 @@ impl MessageRenderer {
             if &capts[1] == r"\" {
                 return capts[0][1..capts[0].len()].replace(":", "&#58;");
             }
+
             let animated = &capts[2] == "a";
             let name = &capts[3];
             let id = &capts[4];
@@ -291,6 +298,7 @@ impl MessageRenderer {
         let content = {
             let content: String = content.into();
             let mut out = String::new();
+            out.reserve(2000 * std::mem::size_of::<char>()); // Maximum length of a discord message is 2000 characters.
             let split = content.split("```");
             for (c, block) in split.enumerate() {
                 if c & 1 == 0 {
@@ -380,17 +388,21 @@ impl MessageRenderer {
                             .get_user(*uid.as_u64())
                             .await // TODO make this synchronous somehow
                             .map(|x| x.name)
-                            .unwrap_or(uid.as_u64().to_string())
+                            .unwrap_or_else(|_| uid.as_u64().to_string())
                     }
                 )
             });
         }
 
+        let end = std::time::Instant::now();
+
+        trace!("Rendered message. Took {}ns", (end - start).as_nanos());
+
+        #[allow(clippy::clippy::useless_conversion)] // This is either needed or not needed depending on what the last rendering step is
         content.into()
     }
 
     fn get_name_used<'a>(&'a self, user: &'a User) -> &'a str {
-        trace!("Begin getting name for user {}", user.name);
         if self.members.keys().find(|x| *x == &user.id).is_none() {
             warn!("Message author found who is not a member of the channel");
             return user.name.as_str();
@@ -408,7 +420,6 @@ impl MessageRenderer {
     }
 
     fn get_highest_role<'a>(&self, guild: &'a PartialGuild, user: &User) -> Option<&'a Role> {
-        trace!("Begin getting highest role for user {}", user.name);
         //if !channel_members_users.iter().find(|x| x.).is_some();
         if self.members.keys().find(|x| *x == &user.id).is_none() {
             warn!("Message author found who is not a member of the channel");
@@ -452,7 +463,7 @@ fn get_avatar_url(author: &User) -> String {
     }
 }
 
-fn get_member_nick<'a>(member: &'a Member) -> &'a str {
+fn get_member_nick(member: &Member) -> &str {
     match member.nick {
         Some(ref x) => x.as_str(),
         None => member.user.name.as_str(),
