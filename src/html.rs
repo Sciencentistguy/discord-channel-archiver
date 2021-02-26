@@ -378,27 +378,34 @@ impl MessageRenderer {
                 .unwrap()
                 .into();
             let member = self.members.get(&uid);
-            content = content.replace(m.as_str(), {
-                &format!(
-                    "<span class=mention>@{}</span>",
-                    if member.is_some() {
-                        get_member_nick(&member.unwrap()).to_string()
-                    } else {
+            content = if member.is_some() {
+                content.replace(m.as_str(), {
+                    &format!(
+                        "<span class=mention>@{}</span>",
+                        get_member_nick(&member.unwrap())
+                    )
+                })
+            } else {
+                content.replace(
+                    m.as_str(),
+                    &format!(
+                        "<span class=mention>@{}</span>",
                         ctx.http
                             .get_user(*uid.as_u64())
                             .await // TODO make this synchronous somehow
                             .map(|x| x.name)
                             .unwrap_or_else(|_| uid.as_u64().to_string())
-                    }
+                    ),
                 )
-            });
+            }
         }
 
         let end = std::time::Instant::now();
 
         trace!("Rendered message. Took {}ns", (end - start).as_nanos());
 
-        #[allow(clippy::clippy::useless_conversion)] // This is either needed or not needed depending on what the last rendering step is
+        // This is either needed or not needed depending on what the last rendering step is
+        #[allow(clippy::clippy::useless_conversion)]
         content.into()
     }
 
