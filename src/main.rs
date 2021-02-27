@@ -4,7 +4,7 @@ mod json;
 use std::str::FromStr;
 use std::{env, io::Write};
 
-use futures::future::join_all;
+use futures::{executor::block_on, future::join_all};
 use lazy_static::lazy_static;
 use log::*;
 use regex::Regex;
@@ -74,16 +74,14 @@ async fn archive(
 ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     trace!("Begin downloading messages");
     let messages = {
-        let mut messages: Vec<Message> = Vec::new();
-        messages = channel.messages(&ctx, |r| r.limit(100)).await.unwrap();
+        let mut messages = channel.messages(&ctx, |r| r.limit(100)).await?;
         let mut x = 100;
         while x == 100 {
             let last_msg = (&messages).last().unwrap();
             let new_msgs = channel
                 .id
                 .messages(&ctx, |retreiver| retreiver.before(last_msg.id).limit(100))
-                .await
-                .expect("Failed getting messages");
+                .await?;
             x = new_msgs.len();
             messages.extend(new_msgs.into_iter());
         }
@@ -177,9 +175,28 @@ Valid modes are: `json,html`. All modes are enabled if this parameter is omitted
             .expect("Invalid channel type");
             let guild = channel.guild_id.to_partial_guild(&ctx).await.unwrap();
 
-            info!( "Archive started by user '{}#{:04}' in guild '{}', in channel '{}', with modes '{}'", msg.author.name, msg.author.discriminator, guild.name, channel.name, modes);
+            info!("Archive started by user '{}#{:04}' in guild '{}', in channel '{}', with modes '{}'",
+                msg.author.name,
+                msg.author.discriminator,
+                guild.name,
+                channel.name,
+                modes
+            );
 
-            let created_files = archive(&ctx, &channel, &guild, modes).await.unwrap();
+            let created_files = match archive(&ctx, &channel, &guild, modes).await {
+                Ok(x) => x,
+                Err(e) => {
+                    let errmsg = format!(
+                        "Failed to archive channel '{}', due to error '{}'.",
+                        channel.name,
+                        e.as_ref()
+                    );
+                    drop(e);
+                    error!("{}", &errmsg);
+                    block_on(msg.reply(&ctx, &errmsg)).expect("Failed to send message");
+                    return;
+                }
+            };
 
             msg.reply(
                 &ctx,

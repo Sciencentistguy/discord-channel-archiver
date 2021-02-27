@@ -157,13 +157,16 @@ pub async fn write_html<P: AsRef<Path>>(
             .await;
 
         if !message.attachments.is_empty() {
+            if content != "" {
+                content.push_str("<br>");
+            }
             for att in message.attachments.iter() {
                 trace!(
                     "Found message attachment '{}' in message '{}'",
                     att.url,
                     message.content
                 );
-                content.push_str(&format!(r#"<a href="{0}">{0}</a>"#, att.url));
+                content.push_str(&format!(r#"<a href="{0}">{0}</a><br>"#, att.url));
             }
         }
 
@@ -297,7 +300,7 @@ impl MessageRenderer {
         // Code blocks
         let content = {
             let content: String = content.replace("```<br>", "```");
-            
+
             let mut out = String::new();
             out.reserve(2000 * std::mem::size_of::<char>()); // Maximum length of a discord message is 2000 characters.
             let split = content.split("```");
@@ -387,6 +390,7 @@ impl MessageRenderer {
                     )
                 })
             } else {
+                warn!("User mentioned that's not a member of the channel");
                 content.replace(
                     m.as_str(),
                     &format!(
