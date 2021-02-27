@@ -21,6 +21,7 @@ use futures::future::join_all;
 static CORE_THEME_CSS: &str = include_str!("html_templates/core.css");
 static DARK_THEME_CSS: &str = include_str!("html_templates/dark.css");
 static LIGHT_THEME_CSS: &str = include_str!("html_templates/light.css");
+static IMAGE_FILE_EXTS: [&str; 7] = [".jpg", ".jpeg", ".JPG", ".JPEG", ".png", ".PNG", ".gif"];
 
 lazy_static! {
     static ref CUSTOM_EMOJI_REGEX: Regex = Regex::new(r"(\\?)&lt;(a?):(\w+):(\d+)&gt;").unwrap();
@@ -166,7 +167,16 @@ pub async fn write_html<P: AsRef<Path>>(
                     att.url,
                     message.content
                 );
-                content.push_str(&format!(r#"<a href="{0}">{0}</a><br>"#, att.url));
+                if IMAGE_FILE_EXTS.iter().any(|x| att.url.ends_with(x)) {
+                    content.push_str(&format!(
+                        r#"<span class="chatlog__embed-image-container">
+    <img class="chatlog__embed-image" title="{0:}", src="{0:}" alt="{0:}"/>
+</span><br>"#,
+                        att.url
+                    ));
+                } else {
+                    content.push_str(&format!(r#"<a href="{0}">{0}</a><br>"#, att.url));
+                }
             }
         }
 
