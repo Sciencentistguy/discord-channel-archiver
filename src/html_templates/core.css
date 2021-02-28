@@ -169,6 +169,14 @@ img {
   font-weight: 500;
 }
 
+.mention:hover {
+  border-radius: 3px;
+  padding: 0 2px;
+  color: #ffffff;
+  background: #7289da;
+  font-weight: 500;
+}
+
 .emoji {
   width: 1.375em;
   height: 1.375em;

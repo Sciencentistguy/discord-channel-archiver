@@ -221,17 +221,21 @@ Valid modes are: `json,html`. All modes are enabled if this parameter is omitted
             ready.guilds.len()
         );
         loop {
-            let guilds: Vec<_> = ready
-                .guilds
-                .iter()
-                .map(|g| g.id().to_partial_guild(&ctx))
-                .collect();
-            let guilds: Vec<_> = join_all(guilds)
+            let guilds = {
+                let mut v = join_all(
+                    ready
+                        .guilds
+                        .iter()
+                        .map(|g| g.id().to_partial_guild(&ctx))
+                        .collect::<Vec<_>>(),
+                )
                 .await
                 .into_iter()
                 .collect::<Result<Vec<_>, _>>()
                 .unwrap();
-
+                v.sort_by_key(|g| g.id);
+                v
+            };
             println!("Please select a guild:");
             println!(" 0 - exit menu");
             for (i, guild) in guilds.iter().enumerate() {
@@ -253,19 +257,23 @@ Valid modes are: `json,html`. All modes are enabled if this parameter is omitted
             };
             println!("Selected '{}'", guild.name);
 
-            let channels: Vec<_> = guild
-                .channels(&ctx)
-                .await
-                .unwrap()
-                .into_iter()
-                .filter_map(|(_, channel)| {
-                    use serenity::model::channel::ChannelType::*;
-                    match channel.kind {
-                        Text => Some(channel),
-                        _ => None,
-                    }
-                })
-                .collect();
+            let channels: Vec<_> = {
+                let mut v = guild
+                    .channels(&ctx)
+                    .await
+                    .unwrap()
+                    .into_iter()
+                    .filter_map(|(_, channel)| {
+                        use serenity::model::channel::ChannelType::*;
+                        match channel.kind {
+                            Text => Some(channel),
+                            _ => None,
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                v.sort_by_key(|c| c.id);
+                v
+            };
 
             println!("Please select a channel:");
             for (i, channel) in channels.iter().enumerate() {
@@ -284,6 +292,7 @@ Valid modes are: `json,html`. All modes are enabled if this parameter is omitted
                                 .unwrap()
                                 .guild()
                                 .map(|x| x.name)
+                                .unwrap()
                         )
                     } else {
                         "".into()

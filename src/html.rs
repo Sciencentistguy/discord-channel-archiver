@@ -73,8 +73,17 @@ pub async fn write_html<P: AsRef<Path>>(
     };
 
     let html = html.replace(
-        "DISCORD_GUILD_ICON_URL",
-        &guild.icon_url().unwrap_or_else(|| "".into()),
+        "GUILD_ICON",
+        format!(
+            r#" <img
+ class="preamble__guild-icon"
+ src="{}"
+ alt="{}"
+ />"#,
+            guild.icon_url().unwrap_or_else(|| "".into()),
+            get_acronym_from_str(guild.name.as_str()),
+        )
+        .as_str(),
     );
 
     let category_name = match channel.category_id {
@@ -153,32 +162,7 @@ pub async fn write_html<P: AsRef<Path>>(
             author_nick_or_user,
         );
 
-        let mut content = message_renderer
-            .render_message(&message.content, &ctx)
-            .await;
-
-        if !message.attachments.is_empty() {
-            if content != "" {
-                content.push_str("<br>");
-            }
-            for att in message.attachments.iter() {
-                trace!(
-                    "Found message attachment '{}' in message '{}'",
-                    att.url,
-                    message.content
-                );
-                if IMAGE_FILE_EXTS.iter().any(|x| att.url.ends_with(x)) {
-                    content.push_str(&format!(
-                        r#"<span class="chatlog__embed-image-container">
-    <img class="chatlog__embed-image" title="{0:}", src="{0:}" alt="{0:}"/>
-</span><br>"#,
-                        att.url
-                    ));
-                } else {
-                    content.push_str(&format!(r#"<a href="{0}">{0}</a><br>"#, att.url));
-                }
-            }
-        }
+        let content = message_renderer.render_message(&message, &ctx).await;
 
         let message_group = format!(
             r#"<div class="chatlog__message-group">
@@ -268,7 +252,12 @@ impl MessageRenderer {
         })
     }
 
-    async fn render_message(&self, content: &str, ctx: &Context) -> String {
+    async fn render_message(
+        &self,
+        message: &serenity::model::channel::Message,
+        ctx: &Context,
+    ) -> String {
+        let content = message.content.as_str();
         trace!("Rendering message:\n{}.", content);
         let start = std::time::Instant::now();
         //TODO don't render mardown inside code blocks.
@@ -282,7 +271,18 @@ impl MessageRenderer {
         // URLs
         let content = URL_REGEX.replace_all(&content, |capts: &regex::Captures| {
             trace!("Found URL '{}' in '{}'", &capts[0], &content);
-            format!(r#"<a href="{0}">{0}</a>"#, &capts[0])
+            if capts[0] == content && IMAGE_FILE_EXTS.iter().any(|x| capts[0].ends_with(x)) {
+                format!(
+                    r#"<span class="chatlog__embed-image-container">
+    <a href="{0:}" target="_blank">
+        <img class="chatlog__embed-image" title="{0:}", src="{0:}" alt="{0:}"/>
+    </a>
+</span><br>"#,
+                    &capts[0]
+                )
+            } else {
+                format!(r#"<a href="{0}">{0}</a>"#, &capts[0])
+            }
         });
 
         // Custom (non-unicode) emoji
@@ -415,6 +415,32 @@ impl MessageRenderer {
             }
         }
 
+        // Message attachments
+        if !message.attachments.is_empty() {
+            if content != "" {
+                content.push_str("<br>");
+            }
+            for attachment in message.attachments.iter() {
+                trace!(
+                    "Found message attachment '{}' in message '{}'",
+                    attachment.url,
+                    message.content
+                );
+                if IMAGE_FILE_EXTS.iter().any(|x| attachment.url.ends_with(x)) {
+                    content.push_str(&format!(
+                        r#"<span class="chatlog__embed-image-container">
+    <a href="{0:}" target="_blank">
+        <img class="chatlog__embed-image" title="{0:}", src="{0:}" alt="{0:}"/>
+    </a>
+</span><br>"#,
+                        attachment.url
+                    ));
+                } else {
+                    content.push_str(&format!(r#"<a href="{0}">{0}</a><br>"#, attachment.url));
+                }
+            }
+        }
+
         let end = std::time::Instant::now();
 
         trace!("Rendered message. Took {}ns", (end - start).as_nanos());
@@ -490,4 +516,19 @@ fn get_member_nick(member: &Member) -> &str {
         Some(ref x) => x.as_str(),
         None => member.user.name.as_str(),
     }
+}
+
+fn get_acronym_from_str(string: &str) -> String {
+    let splitted = string.split(' ').collect::<Vec<_>>();
+    let mut out = String::with_capacity(splitted.len());
+    for word in splitted {
+        out.push(match word.chars().next() {
+            Some(x) => x,
+            None => {
+                break;
+            }
+        })
+    }
+
+    out
 }
