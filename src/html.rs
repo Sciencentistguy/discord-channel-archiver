@@ -6,6 +6,7 @@ use std::path::Path;
 
 use lazy_static::lazy_static;
 
+use serenity::model::channel::GuildChannel;
 use serenity::model::channel::Message;
 use serenity::model::guild::Member;
 use serenity::model::guild::PartialGuild;
@@ -18,10 +19,12 @@ use regex::Regex;
 
 use futures::future::join_all;
 
-static CORE_THEME_CSS: &str = include_str!("html_templates/core.css");
-static DARK_THEME_CSS: &str = include_str!("html_templates/dark.css");
-static LIGHT_THEME_CSS: &str = include_str!("html_templates/light.css");
-static IMAGE_FILE_EXTS: [&str; 7] = [".jpg", ".jpeg", ".JPG", ".JPEG", ".png", ".PNG", ".gif"];
+const CORE_THEME_CSS: &str = include_str!("html_templates/core.css");
+const DARK_THEME_CSS: &str = include_str!("html_templates/dark.css");
+const LIGHT_THEME_CSS: &str = include_str!("html_templates/light.css");
+const IMAGE_FILE_EXTS: [&str; 7] = [".jpg", ".jpeg", ".JPG", ".JPEG", ".png", ".PNG", ".gif"];
+
+const USE_DARK_MODE: bool = true;
 
 lazy_static! {
     static ref CUSTOM_EMOJI_REGEX: Regex = Regex::new(r"(\\?)&lt;(a?):(\w+):(\d+)&gt;").unwrap();
@@ -29,7 +32,7 @@ lazy_static! {
     static ref BOLD_REGEX: Regex = Regex::new(r"\*\*([^\*]+)\*\*").unwrap();
     static ref UNDERLINE_REGEX: Regex = Regex::new(r"__([^_]+)__").unwrap();
     static ref ITALICS_REGEX: Regex = Regex::new(r"\*([^\*]+)\*").unwrap();
-    static ref ITALICS_REGEX2: Regex = Regex::new(r"_([^_]+)_").unwrap();
+    static ref ITALICS_REGEX2: Regex = Regex::new(r"_([^_>]+)_").unwrap();
     static ref STRIKETHROUGH_REGEX: Regex = Regex::new(r"~~([^~]+)~~").unwrap();
     static ref EMOJI_REGEX: Regex = Regex::new(r":(\w+):").unwrap();
     static ref CHANNEL_MENTION_REGEX: Regex = Regex::new(r"&lt;#(\d+)&gt;").unwrap();
@@ -39,34 +42,24 @@ lazy_static! {
         r"(?:(?:http|https|ftp)://)(?:\S+(?::\S*)?@)?(?:(?:(?:[1-9]\d?|1\d\d|2[01]\d|22[0-3])(?:\.(?:1?\d{1,2}|2[0-4]\d|25[0-5])){2}(?:\.(?:[0-9]\d?|1\d\d|2[0-4]\d|25[0-4]))|(?:(?:[a-z\u00a1-\uffff0-9]+-?)*[a-z\u00a1-\uffff0-9]+)(?:\.(?:[a-z\u00a1-\uffff0-9]+-?)*[a-z\u00a1-\uffff0-9]+)*(?:\.(?:[a-z\u00a1-\uffff]{2,})))|localhost)(?::\d{2,5})?(?:(/|\?|#)[^\s]*)?"
     )
     .unwrap();
+    static ref QUOTE_REGEX: Regex = Regex::new(r"(?:&gt;[^<]*(?:<br>)?)+").unwrap();
 }
 
 pub async fn write_html<P: AsRef<Path>>(
     messages: &[Message],
+    guild: &PartialGuild,
+    channel: &GuildChannel,
     path: P,
     ctx: &Context,
 ) -> Result<(), Box<dyn std::error::Error>> {
     trace!("Entered HTML generator.");
-    let channel = messages
-        .first()
-        .unwrap()
-        .channel_id
-        .to_channel(&ctx)
-        .await
-        .unwrap()
-        .guild()
-        .unwrap();
-
-    let guild = channel.guild_id.to_partial_guild(&ctx).await.unwrap();
-
-    let dark_mode = true;
     let html = include_str!("html_templates/preamble_template.html");
     let html = html.replace("DISCORD_GUILD_NAME", &guild.name);
     let html = html.replace("DISCORD_CHANNEL_NAME", &channel.name);
 
     let html = html.replace("CORE_STYLESHEET", CORE_THEME_CSS);
 
-    let html = if dark_mode {
+    let html = if USE_DARK_MODE {
         html.replace("THEME_STYLESHEET", DARK_THEME_CSS)
     } else {
         html.replace("THEME_STYLESHEET", LIGHT_THEME_CSS)
@@ -380,6 +373,13 @@ impl MessageRenderer {
             let cid: u64 = capts[1].parse().unwrap();
             let name = self.channel_names.get(&cid).unwrap();
             format!("<span class=mention>#{}</span>", name)
+        });
+
+        // Quote blocks
+        let content = QUOTE_REGEX.replace_all(&content, |capts: &regex::Captures| {
+            trace!("Found quote block '{}' in '{}'", &capts[0], &content);
+            let s = capts[0][4..].replace("<br>&gt;", "<br>");
+            format!("<div class=quote>{}</div>", s)
         });
 
         let mut content: String = content.into();

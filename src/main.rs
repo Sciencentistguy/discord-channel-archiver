@@ -104,7 +104,7 @@ async fn archive(
 
     if modes.html {
         let filename = format!("{}.html", output_filename);
-        match html::write_html(&messages, &filename, &ctx).await {
+        match html::write_html(&messages, &guild, &channel, &filename, &ctx).await {
             Ok(_) => {}
             Err(x) => error!("Error writing html: {}", x),
         }
