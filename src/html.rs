@@ -263,6 +263,9 @@ impl MessageRenderer {
         let start = std::time::Instant::now();
         //TODO don't render mardown inside code blocks.
 
+        // Ampersands break things 
+        let content = content.replace("&", "&amp;");
+
         // Sanitise < and >
         let content = content.replace("<", "&lt;").replace(">", "&gt;");
 
