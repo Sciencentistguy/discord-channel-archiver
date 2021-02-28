@@ -39,10 +39,10 @@ lazy_static! {
     static ref USER_MENTION_REGEX: Regex = Regex::new(r"&lt;@!(\d+)&gt;").unwrap();
     static ref USER_MENTION_UNSANITISED_REGEX: Regex = Regex::new(r"<@!(\d+)>").unwrap();
     static ref URL_REGEX: Regex = Regex::new(
-        r"(?:(?:http|https|ftp)://)(?:\S+(?::\S*)?@)?(?:(?:(?:[1-9]\d?|1\d\d|2[01]\d|22[0-3])(?:\.(?:1?\d{1,2}|2[0-4]\d|25[0-5])){2}(?:\.(?:[0-9]\d?|1\d\d|2[0-4]\d|25[0-4]))|(?:(?:[a-z\u00a1-\uffff0-9]+-?)*[a-z\u00a1-\uffff0-9]+)(?:\.(?:[a-z\u00a1-\uffff0-9]+-?)*[a-z\u00a1-\uffff0-9]+)*(?:\.(?:[a-z\u00a1-\uffff]{2,})))|localhost)(?::\d{2,5})?(?:(/|\?|#)[^\s]*)?"
+        r"(?:&lt;)?((?:(?:http|https|ftp)://)(?:\S+(?::\S*)?@)?(?:(?:(?:[1-9]\d?|1\d\d|2[01]\d|22[0-3])(?:\.(?:1?\d{1,2}|2[0-4]\d|25[0-5])){2}(?:\.(?:[0-9]\d?|1\d\d|2[0-4]\d|25[0-4]))|(?:(?:[a-z\u00a1-\uffff0-9]+-?)*[a-z\u00a1-\uffff0-9]+)(?:\.(?:[a-z\u00a1-\uffff0-9]+-?)*[a-z\u00a1-\uffff0-9]+)*(?:\.(?:[a-z\u00a1-\uffff]{2,})))|localhost)(?::\d{2,5})?(?:(/|\?|#)[^\s]*)?)(?:&gt;)?"
     )
     .unwrap();
-    static ref QUOTE_REGEX: Regex = Regex::new(r"(?:&gt;[^<]*(?:<br>)?)+").unwrap();
+    static ref QUOTE_REGEX: Regex = Regex::new(r"(?:^|<br>)((?:&gt;[^<\n]*(?:<br>)?)+)").unwrap();
 }
 
 pub async fn write_html<P: AsRef<Path>>(
@@ -263,18 +263,18 @@ impl MessageRenderer {
 
         // URLs
         let content = URL_REGEX.replace_all(&content, |capts: &regex::Captures| {
-            trace!("Found URL '{}' in '{}'", &capts[0], &content);
-            if capts[0] == content && IMAGE_FILE_EXTS.iter().any(|x| capts[0].ends_with(x)) {
+            trace!("Found URL '{}' in '{}'", &capts[1], &content);
+            if capts[0] == content && IMAGE_FILE_EXTS.iter().any(|x| capts[1].ends_with(x)) {
                 format!(
                     r#"<span class="chatlog__embed-image-container">
     <a href="{0:}" target="_blank">
         <img class="chatlog__embed-image" title="{0:}", src="{0:}" alt="{0:}"/>
     </a>
 </span><br>"#,
-                    &capts[0]
+                    &capts[1]
                 )
             } else {
-                format!(r#"<a href="{0}">{0}</a>"#, &capts[0])
+                format!(r#"<a href="{0}">{0}</a>"#, &capts[1])
             }
         });
 
@@ -378,7 +378,7 @@ impl MessageRenderer {
         // Quote blocks
         let content = QUOTE_REGEX.replace_all(&content, |capts: &regex::Captures| {
             trace!("Found quote block '{}' in '{}'", &capts[0], &content);
-            let s = capts[0][4..].replace("<br>&gt;", "<br>");
+            let s = capts[1][4..].replace("<br>&gt;", "<br>");
             format!("<div class=quote>{}</div>", s)
         });
 
