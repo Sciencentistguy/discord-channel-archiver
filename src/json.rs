@@ -2,7 +2,8 @@ use std::fs;
 use std::path::Path;
 
 use log::*;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 use serde_json::json;
 use serenity::model::channel::Message;
 use serenity::prelude::Context;

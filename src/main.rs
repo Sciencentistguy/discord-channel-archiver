@@ -1,23 +1,22 @@
 mod html;
 mod json;
 
+use std::env;
+use std::io::Write;
 use std::str::FromStr;
-use std::{env, io::Write};
 
-use futures::{executor::block_on, future::join_all};
+use futures::executor::block_on;
+use futures::future::join_all;
 use lazy_static::lazy_static;
 use log::*;
 use regex::Regex;
-use serenity::{
-    async_trait,
-    model::{
-        channel::{GuildChannel, Message},
-        gateway::Ready,
-        guild::PartialGuild,
-        id::ChannelId,
-    },
-    prelude::*,
-};
+use serenity::async_trait;
+use serenity::model::channel::GuildChannel;
+use serenity::model::channel::Message;
+use serenity::model::gateway::Ready;
+use serenity::model::guild::PartialGuild;
+use serenity::model::id::ChannelId;
+use serenity::prelude::*;
 use structopt::StructOpt;
 use text_io::read;
 
