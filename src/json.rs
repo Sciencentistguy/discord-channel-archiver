@@ -85,10 +85,8 @@ pub async fn write_json<P: AsRef<Path>>(
 
     let message_jsons: Vec<MessageJson> = messages
         .iter()
-        .enumerate()
-        .map(|(i, message)| {
+        .map(|message| {
             let author = &message.author;
-            trace!("Archived message {} / {}", i, messages.len());
             MessageJson {
                 id: *message.id.as_u64(),
                 timestamp: message.timestamp.timestamp(),

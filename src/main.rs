@@ -2,6 +2,7 @@ mod html;
 mod json;
 
 use std::env;
+use std::io;
 use std::io::Write;
 use std::str::FromStr;
 
@@ -72,6 +73,7 @@ async fn archive(
     modes: ArchivalMode,
 ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     trace!("Begin downloading messages");
+    let start = std::time::Instant::now();
     let messages = {
         let mut messages = channel.messages(&ctx, |r| r.limit(100)).await?;
         let mut x = 100;
@@ -87,25 +89,34 @@ async fn archive(
         messages.reverse();
         messages
     };
-    trace!("{} messages downloaded", messages.len());
+    let end = std::time::Instant::now();
+    trace!(
+        "{} messages downloaded. Took {:.2}s",
+        messages.len(),
+        (end - start).as_secs_f64()
+    );
 
     let output_filename = format!("{}/{}-{}", PATH, guild.name, channel.name);
 
     let mut created_files: Vec<String> = Vec::new();
     if modes.json {
         let filename = format!("{}.json", output_filename);
-        match json::write_json(&messages, &filename, &ctx).await {
-            Ok(_) => {}
-            Err(x) => error!("Error writing json: {}", x),
+        while let Err(x) = json::write_json(&messages, &filename, &ctx).await {
+            error!("Failed to write json: {}", x);
+            if !confirm("Retry?", true)? {
+                break;
+            }
         }
         created_files.push(filename);
     }
 
     if modes.html {
         let filename = format!("{}.html", output_filename);
-        match html::write_html(&messages, &guild, &channel, &filename, &ctx).await {
-            Ok(_) => {}
-            Err(x) => error!("Error writing html: {}", x),
+        while let Err(x) = html::write_html(&messages, &guild, &channel, &filename, &ctx).await {
+            error!("Failed to write html: {}", x);
+            if !confirm("Retry?", true)? {
+                break;
+            }
         }
         created_files.push(filename);
     }
@@ -313,6 +324,27 @@ Valid modes are: `json,html`. All modes are enabled if this parameter is omitted
     }
 }
 
+pub fn confirm(prompt: &str, default: bool) -> std::io::Result<bool> {
+    let mut buf = String::new();
+    loop {
+        if default {
+            print!("{} (Y/n) ", prompt);
+        } else {
+            print!("{} (y/N) ", prompt);
+        }
+
+        io::stdout().lock().flush()?;
+        io::stdin().read_line(&mut buf)?;
+        buf.make_ascii_lowercase();
+
+        match &*(buf.trim_end()) {
+            "y" | "yes" => return Ok(true),
+            "n" | "no" => return Ok(false),
+            "" => return Ok(default),
+            _ => println!("Invalid response."),
+        }
+    }
+}
 #[derive(StructOpt, Debug)]
 #[structopt(
     name = "discord-channel-archiver",

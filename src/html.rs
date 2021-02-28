@@ -107,12 +107,17 @@ pub async fn write_html<P: AsRef<Path>>(
     trace!("Generated preamble");
 
     trace!("Begin getting channel members");
+    let start = std::time::Instant::now();
     let mut members: Vec<_> = messages.iter().map(|x| &x.author).collect();
     members.sort_by_key(|user| user.id);
     members.dedup();
     let members: Vec<_> = members.iter().map(|x| guild.member(&ctx, x.id)).collect();
 
-    trace!("Need to get {} members", members.len());
+    trace!(
+        "Need to get {} members (This will take a while)",
+        members.len()
+    );
+
     let members = join_all(members).await;
     let members: Vec<_> = members
         .into_iter()
@@ -121,6 +126,9 @@ pub async fn write_html<P: AsRef<Path>>(
             Err(_) => None,
         })
         .collect();
+
+    let end = std::time::Instant::now();
+    trace!("Getting members took {:.2}s", (end - start).as_secs_f64());
 
     let message_renderer = MessageRenderer::new(&ctx, &guild, members).await?;
 
@@ -261,45 +269,7 @@ impl MessageRenderer {
         // HTML doesn't respect newlines, it needs <br>
         let content = content.replace("\n", "<br>");
 
-        // URLs
-        let content = URL_REGEX.replace_all(&content, |capts: &regex::Captures| {
-            trace!("Found URL '{}' in '{}'", &capts[1], &content);
-            if capts[0] == content && IMAGE_FILE_EXTS.iter().any(|x| capts[1].ends_with(x)) {
-                format!(
-                    r#"<span class="chatlog__embed-image-container">
-    <a href="{0:}" target="_blank">
-        <img class="chatlog__embed-image" title="{0:}", src="{0:}" alt="{0:}"/>
-    </a>
-</span><br>"#,
-                    &capts[1]
-                )
-            } else {
-                format!(r#"<a href="{0}">{0}</a>"#, &capts[1])
-            }
-        });
-
         // Custom (non-unicode) emoji
-        let content = CUSTOM_EMOJI_REGEX.replace_all(&content, |capts: &regex::Captures| {
-            if &capts[1] == r"\" {
-                return capts[0][1..capts[0].len()].replace(":", "&#58;");
-            }
-
-            let animated = &capts[2] == "a";
-            let name = &capts[3];
-            let id = &capts[4];
-
-            trace!("Found custom emoji '{}' in '{}'", name, content);
-            let url = match animated {
-                true => format!("https://cdn.discordapp.com/emojis/{}.gif", id),
-                false => format!("https://cdn.discordapp.com/emojis/{}.png", id),
-            };
-
-            format!(
-                r#"<img class="emoji" src="{0:}" alt="{1:}" title="{1:}"/>"#,
-                url, &capts[1]
-            )
-        });
-
         // Code blocks
         let content = {
             let content: String = content.replace("```<br>", "```");
@@ -356,6 +326,44 @@ impl MessageRenderer {
             format!("<s>{}</s>", &capts[1])
         });
 
+        // URLs
+        let content = URL_REGEX.replace_all(&content, |capts: &regex::Captures| {
+            trace!("Found URL '{}' in '{}'", &capts[1], &content);
+            if capts[0] == content && IMAGE_FILE_EXTS.iter().any(|x| capts[1].ends_with(x)) {
+                format!(
+                    r#"<span class="chatlog__embed-image-container">
+    <a href="{0:}" target="_blank">
+        <img class="chatlog__embed-image" title="{0:}", src="{0:}" alt="{0:}"/>
+    </a>
+</span><br>"#,
+                    &capts[1]
+                )
+            } else {
+                format!(r#"<a href="{0}">{0}</a>"#, &capts[1])
+            }
+        });
+
+        let content = CUSTOM_EMOJI_REGEX.replace_all(&content, |capts: &regex::Captures| {
+            if &capts[1] == r"\" {
+                return capts[0][1..capts[0].len()].replace(":", "&#58;");
+            }
+
+            let animated = &capts[2] == "a";
+            let name = &capts[3];
+            let id = &capts[4];
+
+            trace!("Found custom emoji '{}' in '{}'", name, content);
+            let url = match animated {
+                true => format!("https://cdn.discordapp.com/emojis/{}.gif", id),
+                false => format!("https://cdn.discordapp.com/emojis/{}.png", id),
+            };
+
+            format!(
+                r#"<img class="emoji" src="{0:}" alt="{1:}" title="{1:}"/>"#,
+                url, &capts[1]
+            )
+        });
+
         // Emoji (unicode)
         let content = EMOJI_REGEX.replace_all(&content, |capts: &regex::Captures| {
             trace!("Found emoji '{}' in '{}'", &capts[0], content);
@@ -371,8 +379,14 @@ impl MessageRenderer {
         let content = CHANNEL_MENTION_REGEX.replace_all(&content, |capts: &regex::Captures| {
             trace!("Found channel mention '{}' in '{}'", &capts[0], &content);
             let cid: u64 = capts[1].parse().unwrap();
-            let name = self.channel_names.get(&cid).unwrap();
-            format!("<span class=mention>#{}</span>", name)
+            let name = self.channel_names.get(&cid);
+            match name {
+                Some(x) => format!("<span class=mention>#{}</span>", x),
+                None => {
+                    warn!("Channel mentioned that does not exist");
+                    format!("<span class=mention>#{}</span>", cid.to_string())
+                }
+            }
         });
 
         // Quote blocks
@@ -392,32 +406,31 @@ impl MessageRenderer {
                 .unwrap()
                 .into();
             let member = self.members.get(&uid);
-            content = if member.is_some() {
-                content.replace(m.as_str(), {
-                    &format!(
-                        "<span class=mention>@{}</span>",
-                        get_member_nick(&member.unwrap())
-                    )
-                })
-            } else {
-                warn!("User mentioned that's not a member of the channel");
-                content.replace(
+            content = match member {
+                Some(x) => content.replace(
                     m.as_str(),
-                    &format!(
-                        "<span class=mention>@{}</span>",
-                        ctx.http
-                            .get_user(*uid.as_u64())
-                            .await // TODO make this synchronous somehow
-                            .map(|x| x.name)
-                            .unwrap_or_else(|_| uid.as_u64().to_string())
-                    ),
-                )
+                    &format!("<span class=mention>@{}</span>", get_member_nick(x)),
+                ),
+                None => {
+                    warn!("User mentioned that's not a member of the channel");
+                    content.replace(
+                        m.as_str(),
+                        &format!(
+                            "<span class=mention>@{}</span>",
+                            ctx.http
+                                .get_user(*uid.as_u64())
+                                .await // TODO make this synchronous somehow
+                                .map(|x| x.name)
+                                .unwrap_or_else(|_| uid.as_u64().to_string())
+                        ),
+                    )
+                }
             }
         }
 
         // Message attachments
         if !message.attachments.is_empty() {
-            if content != "" {
+            if !content.is_empty() {
                 content.push_str("<br>");
             }
             for attachment in message.attachments.iter() {
