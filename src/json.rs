@@ -6,30 +6,33 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde_json::json;
 use serenity::model::channel::Message;
+use serenity::model::channel::MessageType;
 use serenity::prelude::Context;
 
 #[derive(Serialize, Deserialize, Debug)]
 struct GuildJson<'a> {
+    icon_url: Option<String>,
     id: u64,
     name: &'a str,
-    icon_url: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 struct ChannelJson<'a> {
-    id: u64,
     category: Option<String>,
+    id: u64,
     name: &'a str,
+    num_messages: usize,
     topic: Option<&'a str>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 struct UserJson<'a> {
-    id: u64,
-    name: &'a str,
-    discriminator: u16,
-    is_bot: bool,
     avatar_url: Option<String>,
+    discriminator: u16,
+    id: u64,
+    is_bot: bool,
+    name: &'a str,
+    nick: Option<&'a str>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -42,13 +45,15 @@ struct AttachmentJson<'a> {
 
 #[derive(Serialize, Deserialize, Debug)]
 struct MessageJson<'a> {
+    attachments: Vec<AttachmentJson<'a>>,
+    author: UserJson<'a>,
+    content: &'a str,
     id: u64,
+    is_pinned: bool,
+    kind: MessageType,
+    message_url: String,
     timestamp: i64,
     timestamp_edited: Option<i64>,
-    is_pinned: bool,
-    content: &'a str,
-    author: UserJson<'a>,
-    attachments: Vec<AttachmentJson<'a>>,
 }
 
 pub async fn write_json<P: AsRef<Path>>(
@@ -81,6 +86,7 @@ pub async fn write_json<P: AsRef<Path>>(
         },
         name: channel.name(),
         topic: channel.topic.as_deref(),
+        num_messages: messages.len(),
     };
 
     let message_jsons: Vec<MessageJson> = messages
@@ -88,18 +94,6 @@ pub async fn write_json<P: AsRef<Path>>(
         .map(|message| {
             let author = &message.author;
             MessageJson {
-                id: *message.id.as_u64(),
-                timestamp: message.timestamp.timestamp(),
-                timestamp_edited: message.edited_timestamp.map(|x| x.timestamp()),
-                is_pinned: message.pinned,
-                content: message.content.as_str(),
-                author: UserJson {
-                    id: *author.id.as_u64(),
-                    name: author.name.as_str(),
-                    discriminator: author.discriminator,
-                    is_bot: author.bot,
-                    avatar_url: author.avatar_url(),
-                },
                 attachments: message
                     .attachments
                     .iter()
@@ -110,6 +104,21 @@ pub async fn write_json<P: AsRef<Path>>(
                         file_size_bytes: x.size,
                     })
                     .collect(),
+                author: UserJson {
+                    avatar_url: author.avatar_url(),
+                    discriminator: author.discriminator,
+                    id: *author.id.as_u64(),
+                    is_bot: author.bot,
+                    name: author.name.as_str(),
+                    nick: message.member.as_ref().unwrap().nick.as_deref(),
+                },
+                content: message.content.as_str(),
+                id: *message.id.as_u64(),
+                is_pinned: message.pinned,
+                kind: message.kind,
+                message_url: message.link(),
+                timestamp: message.timestamp.timestamp(),
+                timestamp_edited: message.edited_timestamp.map(|x| x.timestamp()),
             }
         })
         .collect();
