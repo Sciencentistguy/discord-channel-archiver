@@ -32,7 +32,6 @@ struct UserJson<'a> {
     id: u64,
     is_bot: bool,
     name: &'a str,
-    nick: Option<&'a str>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -110,7 +109,6 @@ pub async fn write_json<P: AsRef<Path>>(
                     id: *author.id.as_u64(),
                     is_bot: author.bot,
                     name: author.name.as_str(),
-                    nick: message.member.as_ref().unwrap().nick.as_deref(),
                 },
                 content: message.content.as_str(),
                 id: *message.id.as_u64(),
