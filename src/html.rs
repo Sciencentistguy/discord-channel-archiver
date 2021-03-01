@@ -142,7 +142,7 @@ pub async fn write_html<P: AsRef<Path>>(
             r#"<div class="chatlog__author-avatar-container">
     <img class="chatlog__author-avatar" src="{}" alt="Avatar" title="Avatar" />
 </div>"#,
-            get_avatar_url(&author)
+            author.face()
         );
 
         let message_timestamp = format!(
@@ -263,7 +263,7 @@ impl MessageRenderer {
         let start = std::time::Instant::now();
         //TODO don't render mardown inside code blocks.
 
-        // Ampersands break things 
+        // Ampersands break things
         let content = content.replace("&", "&amp;");
 
         // Sanitise < and >
@@ -503,27 +503,10 @@ impl MessageRenderer {
 
         let mut roles: Vec<_> = roles
             .iter()
-            .map(|roleid| guild.roles.get(&roleid).unwrap())
+            .map(|&roleid| guild.roles.get(&roleid).unwrap())
             .collect();
         roles.sort_by_key(|role| role.position);
-        match roles.last() {
-            Some(x) => Some(*x),
-            None => None,
-        }
-    }
-}
-
-fn get_avatar_url(author: &User) -> String {
-    match author.avatar_url() {
-        Some(x) => x,
-        None => match author.discriminator % 5 {
-            0 | 5 => "https://discordapp.com/assets/6debd47ed13483642cf09e832ed0bc1b.png".into(),
-            1 | 6 => "https://discordapp.com/assets/322c936a8c8be1b803cd94861bdfa868.png".into(),
-            2 | 7 => "https://discordapp.com/assets/dd4dbc0016779df1378e7812eabaa04d.png".into(),
-            3 | 8 => "https://discordapp.com/assets/0e291f67c9274a1abdddeb3fd919cbaa.png".into(),
-            4 | 9 => "https://discordapp.com/assets/1cbd08c76f8af6dddce02c5138971129.png".into(),
-            _ => "".into(),
-        },
+        roles.last().copied()
     }
 }
 
