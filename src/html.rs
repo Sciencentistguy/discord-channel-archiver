@@ -29,6 +29,7 @@ const USE_DARK_MODE: bool = true;
 lazy_static! {
     static ref CUSTOM_EMOJI_REGEX: Regex = Regex::new(r"(\\?)&lt;(a?):(\w+):(\d+)&gt;").unwrap();
     static ref INLINE_CODE_REGEX: Regex = Regex::new(r"`([^`]*)`").unwrap();
+    static ref CODE_BLOCK_LANGUAGE_TAG_REGEX: Regex = Regex::new(r"^\w+<br>").unwrap();
     static ref BOLD_REGEX: Regex = Regex::new(r"\*\*([^\*]+)\*\*").unwrap();
     static ref UNDERLINE_REGEX: Regex = Regex::new(r"__([^_]+)__").unwrap();
     static ref ITALICS_REGEX: Regex = Regex::new(r"\*([^\*]+)\*").unwrap();
@@ -109,7 +110,7 @@ pub async fn write_html<P: AsRef<Path>>(
     trace!("Begin getting channel members");
     let start = std::time::Instant::now();
     let mut members: Vec<_> = messages.iter().map(|x| &x.author).collect();
-    members.sort_by_key(|user| user.id);
+    members.sort_unstable_by_key(|user| user.id);
     members.dedup();
     let members: Vec<_> = members.iter().map(|x| guild.member(&ctx, x.id)).collect();
 
@@ -286,7 +287,7 @@ impl MessageRenderer {
                 } else {
                     trace!("Found multiline code block '{}' in '{}'", block, content);
                     out.push_str(r#"<pre class="pre pre--multiline">"#);
-                    out.push_str(block);
+                    out.push_str(CODE_BLOCK_LANGUAGE_TAG_REGEX.replace(block, "").as_ref()); // TODO syntax highlighting with this
                     out.push_str(r#"</pre>"#);
                 }
             }
@@ -505,22 +506,22 @@ impl MessageRenderer {
             .iter()
             .map(|&roleid| guild.roles.get(&roleid).unwrap())
             .collect();
-        roles.sort_by_key(|role| role.position);
+        roles.sort_unstable_by_key(|role| role.position);
         roles.last().copied()
     }
 }
 
+#[inline]
 fn get_member_nick(member: &Member) -> &str {
-    match member.nick {
-        Some(ref x) => x.as_str(),
-        None => member.user.name.as_str(),
-    }
+    member
+        .nick
+        .as_deref()
+        .unwrap_or_else(|| member.user.name.as_str())
 }
 
 fn get_acronym_from_str(string: &str) -> String {
-    let splitted = string.split(' ').collect::<Vec<_>>();
-    let mut out = String::with_capacity(splitted.len());
-    for word in splitted {
+    let mut out = String::with_capacity(string.chars().filter(|&x| x == ' ').count() * 2);
+    for word in string.split(' ') {
         out.push(match word.chars().next() {
             Some(x) => x,
             None => {

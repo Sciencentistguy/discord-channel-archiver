@@ -243,7 +243,7 @@ Valid modes are: `json,html`. All modes are enabled if this parameter is omitted
                 .into_iter()
                 .collect::<Result<Vec<_>, _>>()
                 .unwrap();
-                v.sort_by_key(|g| g.id);
+                v.sort_unstable_by_key(|g| g.id);
                 v
             };
             println!("Please select a guild:");
@@ -281,7 +281,7 @@ Valid modes are: `json,html`. All modes are enabled if this parameter is omitted
                         }
                     })
                     .collect::<Vec<_>>();
-                v.sort_by_key(|c| c.id);
+                v.sort_unstable_by_key(|c| c.id);
                 v
             };
 
