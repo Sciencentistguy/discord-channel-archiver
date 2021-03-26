@@ -1,13 +1,14 @@
+mod file;
 mod html;
 mod json;
 
-use std::env;
 use std::io;
 use std::io::Write;
 use std::str::FromStr;
+use std::{env, path::PathBuf};
 
-use futures::executor::block_on;
 use futures::future::join_all;
+use futures::{executor::block_on, stream::FuturesUnordered, StreamExt};
 use lazy_static::lazy_static;
 use log::*;
 use regex::Regex;
@@ -21,7 +22,10 @@ use serenity::prelude::*;
 use structopt::StructOpt;
 use text_io::read;
 
-static PATH: &str = "/dev/shm";
+const PATH: &str = "/dev/shm";
+const USAGE_STRING: &str = r#"Invalid syntax.
+Correct usage is `!archive <channel> [mode(s)]`, where `<channel>` is the channel you want to archive, and `[mode(s)]` is a possibly comma-separated list of modes.
+Valid modes are: `json,html`. All modes are enabled if this parameter is omitted."#;
 
 lazy_static! {
     static ref COMMAND_REGEX: Regex = Regex::new(r"^!archive +<#(\d+)> *([\w,]+)?$").unwrap();
@@ -125,6 +129,41 @@ async fn archive(
     Ok(created_files)
 }
 
+async fn archive_emoji(ctx: &Context, msg: &Message, guild: &PartialGuild) {
+    info!("Starting emoji archive");
+    let mut output_directory = PathBuf::from(PATH);
+    output_directory.push(format!(
+        "{}-{}",
+        guild.name.replace(" ", "-").to_lowercase(),
+        chrono::Utc::now().format("%Y-%m-%dT%H-%M-%S")
+    ));
+
+    let mut fut: FuturesUnordered<_> = guild
+        .emojis
+        .iter()
+        .map(|(_, emoji)| {
+            let url = emoji.url();
+            let ext = &url[url
+                .rfind(".")
+                .expect("Emoji url does not have a file extension")
+                + 1..];
+            let download_path = output_directory.join(format!("{}.{}", emoji.name, ext));
+            file::download_url(url, download_path)
+        })
+        .collect();
+    while let Some(_) = fut.next().await {}
+    msg.reply(
+        &ctx,
+        format!(
+            "Archived {} emoji into `{}`",
+            guild.emojis.len(),
+            output_directory.as_os_str().to_str().unwrap()
+        ),
+    )
+    .await
+    .expect("Failed to reply to message");
+}
+
 struct Handler;
 
 #[derive(Debug)]
@@ -143,49 +182,62 @@ impl std::fmt::Display for ArchivalMode {
 impl EventHandler for Handler {
     async fn message(&self, ctx: Context, msg: Message) {
         if msg.content.starts_with("!archive") {
-            let capts = COMMAND_REGEX.captures(&msg.content);
-            if capts.as_ref().map(|x| x.get(0)).is_none() {
-                msg.reply(&ctx,
-                    r#"Invalid syntax.
-Correct usage is `!archive <channel> [mode(s)]`, where `<channel>` is the channel you want to archive, and `[mode(s)]` is a possibly comma-separated list of modes.
-Valid modes are: `json,html`. All modes are enabled if this parameter is omitted."#).await.expect("Failed to reply to message.");
-                info!("Invalid archive command supplied: '{}'", &msg.content);
-                return;
-            }
-            let capts = capts.unwrap();
-            let channel_id_str = &capts[1];
-            let modes = match capts
-                .get(2)
-                .map(|x| x.as_str().split(',').collect::<Vec<_>>())
-            {
-                Some(x) => ArchivalMode {
-                    json: x.contains(&"json"),
-                    html: x.contains(&"html"),
-                },
-                None => ArchivalMode {
-                    json: true,
-                    html: true,
-                },
-            };
-            trace!("Command parsed");
-
-            let channel = match ChannelId::from_str(channel_id_str) {
-                Ok(x) => x,
-                Err(_) => {
-                    msg.reply(&ctx, format!("Invalid channel id {}.", channel_id_str))
+            if msg.content.starts_with("!archive-emoji") {
+                let guild = msg
+                    .channel_id
+                    .to_channel(&ctx)
+                    .await
+                    .ok()
+                    .and_then(|x| x.guild())
+                    .unwrap()
+                    .guild_id
+                    .to_partial_guild(&ctx)
+                    .await
+                    .unwrap();
+                archive_emoji(&ctx, &msg, &guild).await;
+            } else {
+                let capts = COMMAND_REGEX.captures(&msg.content);
+                if let None = capts.as_ref().and_then(|x| x.get(0)) {
+                    msg.reply(&ctx, USAGE_STRING)
                         .await
-                        .expect("Failed to reply to message");
+                        .expect("Failed to reply to message.");
+                    info!("Invalid archive command supplied: '{}'", &msg.content);
                     return;
                 }
-            }
-            .to_channel(&ctx)
-            .await
-            .expect("Channel not found")
-            .guild()
-            .expect("Invalid channel type");
-            let guild = channel.guild_id.to_partial_guild(&ctx).await.unwrap();
+                let capts = capts.unwrap();
+                let channel_id_str = &capts[1];
+                let modes = match capts
+                    .get(2)
+                    .map(|x| x.as_str().split(',').collect::<Vec<_>>())
+                {
+                    Some(x) => ArchivalMode {
+                        json: x.contains(&"json"),
+                        html: x.contains(&"html"),
+                    },
+                    None => ArchivalMode {
+                        json: true,
+                        html: true,
+                    },
+                };
+                trace!("Command parsed");
 
-            info!("Archive started by user '{}#{:04}' in guild '{}', in channel '{}', with modes '{}'",
+                let channel = match ChannelId::from_str(channel_id_str) {
+                    Ok(x) => x,
+                    Err(_) => {
+                        msg.reply(&ctx, format!("Invalid channel id {}.", channel_id_str))
+                            .await
+                            .expect("Failed to reply to message");
+                        return;
+                    }
+                }
+                .to_channel(&ctx)
+                .await
+                .expect("Channel not found")
+                .guild()
+                .expect("Invalid channel type");
+                let guild = channel.guild_id.to_partial_guild(&ctx).await.unwrap();
+
+                info!("Archive started by user '{}#{:04}' in guild '{}', in channel '{}', with modes '{}'",
                 msg.author.name,
                 msg.author.discriminator,
                 guild.name,
@@ -193,30 +245,31 @@ Valid modes are: `json,html`. All modes are enabled if this parameter is omitted
                 modes
             );
 
-            let created_files = match archive(&ctx, &channel, &guild, modes).await {
-                Ok(x) => x,
-                Err(e) => {
-                    let errmsg = format!(
-                        "Failed to archive channel '{}', due to error '{}'.",
-                        channel.name,
-                        e.as_ref()
-                    );
-                    drop(e);
-                    error!("{}", &errmsg);
-                    block_on(msg.reply(&ctx, &errmsg)).expect("Failed to send message");
-                    return;
-                }
-            };
+                let created_files = match archive(&ctx, &channel, &guild, modes).await {
+                    Ok(x) => x,
+                    Err(e) => {
+                        let errmsg = format!(
+                            "Failed to archive channel '{}', due to error '{}'.",
+                            channel.name,
+                            e.as_ref()
+                        );
+                        drop(e);
+                        error!("{}", &errmsg);
+                        block_on(msg.reply(&ctx, &errmsg)).expect("Failed to send message");
+                        return;
+                    }
+                };
 
-            msg.reply(
-                &ctx,
-                format!(
-                    "Done!\nCreated files:\n```\n{}\n```",
-                    created_files.join("\n")
-                ),
-            )
-            .await
-            .expect("Failed to reply to message.");
+                msg.reply(
+                    &ctx,
+                    format!(
+                        "Done!\nCreated files:\n```\n{}\n```",
+                        created_files.join("\n")
+                    ),
+                )
+                .await
+                .expect("Failed to reply to message.");
+            }
         }
     }
 
