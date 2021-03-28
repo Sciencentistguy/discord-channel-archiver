@@ -17,7 +17,8 @@ use serenity::prelude::Context;
 
 use regex::Regex;
 
-use futures::future::join_all;
+use futures::stream::FuturesUnordered;
+use futures::StreamExt;
 
 const CORE_THEME_CSS: &str = include_str!("html_templates/core.css");
 const DARK_THEME_CSS: &str = include_str!("html_templates/dark.css");
@@ -112,21 +113,27 @@ pub async fn write_html<P: AsRef<Path>>(
     let mut members: Vec<_> = messages.iter().map(|x| &x.author).collect();
     members.sort_unstable_by_key(|user| user.id);
     members.dedup();
-    let members: Vec<_> = members.iter().map(|x| guild.member(&ctx, x.id)).collect();
+    let mut members: FuturesUnordered<_> =
+        members.iter().map(|x| guild.member(&ctx, x.id)).collect();
 
-    trace!(
+    info!(
         "Need to get {} members (This will take a while)",
         members.len()
     );
 
-    let members = join_all(members).await;
-    let members: Vec<_> = members
-        .into_iter()
-        .filter_map(|x| match x {
-            Ok(x) => Some(x),
-            Err(_) => None,
-        })
-        .collect();
+    let members = {
+        let mut count = 1;
+        let total = members.len();
+        let mut vec = Vec::with_capacity(total);
+        while let Some(x) = members.next().await {
+            if let Ok(x) = x {
+                vec.push(x);
+                trace!("Got member {}/{}", count, total);
+                count += 1;
+            }
+        }
+        vec
+    };
 
     let end = std::time::Instant::now();
     trace!("Getting members took {:.2}s", (end - start).as_secs_f64());
@@ -157,7 +164,7 @@ pub async fn write_html<P: AsRef<Path>>(
 </span>"#,
             author.name,
             author.discriminator,
-            author.id.to_string(),
+            author.id.0,
             author_highest_role.map(|x| x.colour.r()).unwrap_or(255),
             author_highest_role.map(|x| x.colour.g()).unwrap_or(255),
             author_highest_role.map(|x| x.colour.b()).unwrap_or(255),
@@ -264,13 +271,13 @@ impl MessageRenderer {
         let start = std::time::Instant::now();
 
         // Ampersands break things
-        let content = content.replace("&", "&amp;");
+        let content = content.replace('&', "&amp;");
 
         // Sanitise < and >
-        let content = content.replace("<", "&lt;").replace(">", "&gt;");
+        let content = content.replace('<', "&lt;").replace('>', "&gt;");
 
         // HTML doesn't respect newlines, it needs <br>
-        let content = content.replace("\n", "<br>");
+        let content = content.replace('\n', "<br>");
 
         // Multiline code blocks
         let mut content = {
@@ -340,6 +347,14 @@ impl MessageRenderer {
                                 let block =
                                     URL_REGEX.replace_all(&block, |capts: &regex::Captures| {
                                         trace!("Found URL '{}' in '{}'", &capts[1], &block);
+                                        let (url, closing_tags) = if capts[1].contains('<') {
+                                            warn!("URL '{}' contains html!", &capts[1]);
+                                            let pos = capts[1].find('<').unwrap();
+                                            (&capts[1][..pos], Some(&capts[1][pos..]))
+                                        } else {
+                                            (&capts[1], None)
+                                        };
+
                                         if capts[0] == block
                                             && IMAGE_FILE_EXTS.iter().any(|x| capts[1].ends_with(x))
                                         {
@@ -349,10 +364,14 @@ impl MessageRenderer {
         <img class="chatlog__embed-image" title="{0:}", src="{0:}" alt="{0:}"/>
     </a>
 </span><br>"#,
-                                                &capts[1]
+                                                url
                                             )
                                         } else {
-                                            format!(r#"<a href="{0}">{0}</a>"#, &capts[1])
+                                            format!(
+                                                r#"<a href="{0}">{0}</a>{1}"#,
+                                                url,
+                                                closing_tags.unwrap_or("")
+                                            )
                                         }
                                     });
 

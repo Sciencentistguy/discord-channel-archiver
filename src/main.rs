@@ -2,13 +2,16 @@ mod file;
 mod html;
 mod json;
 
+use std::env;
 use std::io;
 use std::io::Write;
+use std::path::PathBuf;
 use std::str::FromStr;
-use std::{env, path::PathBuf};
 
+use futures::executor::block_on;
 use futures::future::join_all;
-use futures::{executor::block_on, stream::FuturesUnordered, StreamExt};
+use futures::stream::FuturesUnordered;
+use futures::StreamExt;
 use lazy_static::lazy_static;
 use log::*;
 use regex::Regex;
@@ -134,7 +137,7 @@ async fn archive_emoji(ctx: &Context, msg: &Message, guild: &PartialGuild) {
     let mut output_directory = PathBuf::from(PATH);
     output_directory.push(format!(
         "{}-{}",
-        guild.name.replace(" ", "-").to_lowercase(),
+        guild.name.replace(' ', "-").to_lowercase(),
         chrono::Utc::now().format("%Y-%m-%dT%H-%M-%S")
     ));
 
@@ -144,13 +147,14 @@ async fn archive_emoji(ctx: &Context, msg: &Message, guild: &PartialGuild) {
         .map(|(_, emoji)| {
             let url = emoji.url();
             let ext = &url[url
-                .rfind(".")
+                .rfind('.')
                 .expect("Emoji url does not have a file extension")
                 + 1..];
             let download_path = output_directory.join(format!("{}.{}", emoji.name, ext));
             file::download_url(url, download_path)
         })
         .collect();
+    #[allow(clippy::redundant_pattern_matching)]
     while let Some(_) = fut.next().await {}
     msg.reply(
         &ctx,
@@ -197,7 +201,7 @@ impl EventHandler for Handler {
                 archive_emoji(&ctx, &msg, &guild).await;
             } else {
                 let capts = COMMAND_REGEX.captures(&msg.content);
-                if let None = capts.as_ref().and_then(|x| x.get(0)) {
+                if capts.as_ref().and_then(|x| x.get(0)).is_none() {
                     msg.reply(&ctx, USAGE_STRING)
                         .await
                         .expect("Failed to reply to message.");
