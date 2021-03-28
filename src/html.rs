@@ -11,14 +11,12 @@ use serenity::model::channel::Message;
 use serenity::model::guild::Member;
 use serenity::model::guild::PartialGuild;
 use serenity::model::guild::Role;
+use serenity::model::id::ChannelId;
 use serenity::model::id::UserId;
 use serenity::model::user::User;
 use serenity::prelude::Context;
 
 use regex::Regex;
-
-use futures::stream::FuturesUnordered;
-use futures::StreamExt;
 
 const CORE_THEME_CSS: &str = include_str!("html_templates/core.css");
 const DARK_THEME_CSS: &str = include_str!("html_templates/dark.css");
@@ -108,43 +106,20 @@ pub async fn write_html<P: AsRef<Path>>(
     };
     trace!("Generated preamble");
 
-    trace!("Begin getting channel members");
-    let start = std::time::Instant::now();
-    let mut members: Vec<_> = messages.iter().map(|x| &x.author).collect();
-    members.sort_unstable_by_key(|user| user.id);
-    members.dedup();
-    let mut members: FuturesUnordered<_> =
-        members.iter().map(|x| guild.member(&ctx, x.id)).collect();
+    let channels = guild.channels(&ctx).await?;
 
-    info!(
-        "Need to get {} members (This will take a while)",
-        members.len()
-    );
-
-    let members = {
-        let mut count = 1;
-        let total = members.len();
-        let mut vec = Vec::with_capacity(total);
-        while let Some(x) = members.next().await {
-            if let Ok(x) = x {
-                vec.push(x);
-                trace!("Got member {}/{}", count, total);
-                count += 1;
-            }
-        }
-        vec
-    };
-
-    let end = std::time::Instant::now();
-    trace!("Getting members took {:.2}s", (end - start).as_secs_f64());
-
-    let message_renderer = MessageRenderer::new(&ctx, &guild, members).await?;
+    let mut message_renderer = MessageRenderer::new(&ctx, &guild, channels)?;
 
     trace!("Begin saving messages");
     for (i, message) in messages.iter().enumerate() {
         let author = &message.author;
-        let author_nick_or_user = message_renderer.get_name_used(&message.author);
-        let author_highest_role = message_renderer.get_highest_role(&guild, &message.author);
+        let author_nick_or_user = message_renderer
+            .get_name_used(&message.author)
+            .await
+            .to_owned();
+        let author_highest_role = message_renderer
+            .get_highest_role(&message.author, guild)
+            .await;
 
         let author_avatar_container = format!(
             r#"<div class="chatlog__author-avatar-container">
@@ -171,7 +146,7 @@ pub async fn write_html<P: AsRef<Path>>(
             author_nick_or_user,
         );
 
-        let content = message_renderer.render_message(&message, &ctx).await;
+        let content = message_renderer.render_message(&message).await;
 
         let message_group = format!(
             r#"<div class="chatlog__message-group">
@@ -223,49 +198,59 @@ pub async fn write_html<P: AsRef<Path>>(
     Ok(())
 }
 
-struct MessageRenderer {
+struct MessageRenderer<'outer> {
     channel_names: HashMap<u64, String>,
-    members: HashMap<UserId, Member>,
+    members: HashMap<UserId, Option<Member>>,
+    guild: &'outer PartialGuild,
+    ctx: &'outer Context,
 }
 
-impl MessageRenderer {
-    async fn new(
-        ctx: &Context,
-        guild: &PartialGuild,
-        members: Vec<Member>,
+impl<'outer> MessageRenderer<'outer> {
+    fn new(
+        ctx: &'outer Context,
+        guild: &'outer PartialGuild,
+        mut channels: HashMap<ChannelId, GuildChannel>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         trace!("Begin getting channel names");
         let mut channel_names = HashMap::new();
-        let mut channels = guild.channels(&ctx).await?;
         for (id, channel) in channels.iter_mut() {
             channel_names.insert(*id.as_u64(), std::mem::take(&mut channel.name));
         }
 
-        //trace!("Begin getting names for mentioned users");
-        //trace!("Need to get names for {} users.", mentioned_uids.len());
-        //let mut user_names: HashMap<u64, User> = HashMap::new();
-        //for uid in mentioned_uids {
-        //let name = uid.to_user(&ctx).await?;
-        //trace!("Got name '{}' for user '{}'", name, uid.as_u64());
-        //user_names.insert(*uid.as_u64(), name);
-        //}
-
-        let m: HashMap<_, _> = members
-            .into_iter()
-            .map(|member| (member.user.id, member))
-            .collect();
-
         Ok(Self {
             channel_names,
-            members: m,
+            members: HashMap::new(),
+            guild,
+            ctx,
         })
     }
 
-    async fn render_message(
-        &self,
-        message: &serenity::model::channel::Message,
-        ctx: &Context,
-    ) -> String {
+    async fn get_member(&mut self, user_id: &UserId) -> Option<&Member> {
+        if let Some(m) = self.members.get(user_id) {
+            // It is more obvious that this is safe with a match
+            #[allow(clippy::manual_map)]
+            match m {
+                // SAFETY: These two borrows *are* mutually exclusive, and therefore tricking the
+                // borrow checker here is fine.
+                Some(x) => Some(unsafe { &*(x as *const _) }),
+                None => None,
+            }
+        } else {
+            match self.guild.member(&self.ctx, user_id).await {
+                Ok(x) => {
+                    self.members.insert(*user_id, Some(x));
+                    self.members.get(&user_id).unwrap().as_ref()
+                }
+                Err(_) => {
+                    warn!("User with id '{}' not found in channel.", user_id);
+                    self.members.insert(*user_id, None);
+                    None
+                }
+            }
+        }
+    }
+
+    async fn render_message(&mut self, message: &serenity::model::channel::Message) -> String {
         let content = message.content.as_str();
         trace!("Rendering message:\n{}.", content);
         let start = std::time::Instant::now();
@@ -281,7 +266,10 @@ impl MessageRenderer {
 
         // Multiline code blocks
         let mut content = {
-            let mut out = String::with_capacity(8000 * std::mem::size_of::<char>()); // Maximum length of a discord message is 2000 characters. It is therefore unlikely that a formatted message will exceed 8000 characters
+            // Maximum length of a discord message is 2000 characters. It is therefore unlikely that
+            // a formatted message will exceed 8000 characters
+            let mut out = String::with_capacity(8000 * std::mem::size_of::<char>());
+
             let split = content.split("```");
             for (c, block) in split.enumerate() {
                 if c & 1 == 0 {
@@ -452,7 +440,7 @@ impl MessageRenderer {
                                         .parse::<u64>()
                                         .unwrap()
                                         .into();
-                                    let member = self.members.get(&uid);
+                                    let member = self.get_member(&uid).await;
                                     block = match member {
                                         Some(x) => block.replace(
                                             m.as_str(),
@@ -469,7 +457,8 @@ impl MessageRenderer {
                                                 m.as_str(),
                                                 &format!(
                                                     "<span class=mention>@{}</span>",
-                                                    ctx.http
+                                                    self.ctx
+                                                        .http
                                                         .get_user(*uid.as_u64())
                                                         .await // TODO make this synchronous somehow
                                                         .map(|x| x.name)
@@ -538,44 +527,36 @@ impl MessageRenderer {
         content.into()
     }
 
-    fn get_name_used<'a>(&'a self, user: &'a User) -> &'a str {
-        if self.members.keys().find(|x| *x == &user.id).is_none() {
-            warn!("Message author found who is not a member of the channel");
-            return user.name.as_str();
-        }
+    async fn get_name_used<'a>(&'a mut self, user: &'a User) -> &'a str {
         match self
-            .members
-            .values()
-            .find(|member| member.user.id == user.id)
-            .unwrap()
-            .nick
+            .get_member(&user.id)
+            .await
+            .and_then(|ref x| x.nick.as_ref())
         {
-            Some(ref x) => x.as_str(),
+            Some(x) => x.as_str(),
             None => user.name.as_str(),
         }
     }
 
-    fn get_highest_role<'a>(&self, guild: &'a PartialGuild, user: &User) -> Option<&'a Role> {
-        //if !channel_members_users.iter().find(|x| x.).is_some();
+    async fn get_highest_role(
+        &mut self,
+        user: &User,
+        guild: &'outer PartialGuild,
+    ) -> Option<&'outer Role> {
         if self.members.keys().find(|x| *x == &user.id).is_none() {
             warn!("Message author found who is not a member of the channel");
             return None;
         }
-        let roles = match self
-            .members
-            .values()
-            .find(|member| member.user.id == user.id)
-        {
-            Some(x) => &x.roles,
-            None => {
-                warn!("User {} has no roles", user.name);
-                return None;
-            }
+
+        let member = match self.get_member(&user.id).await {
+            Some(x) => x,
+            None => return None,
         };
 
-        let mut roles: Vec<_> = roles
+        let mut roles: Vec<_> = member
+            .roles
             .iter()
-            .map(|&roleid| guild.roles.get(&roleid).unwrap())
+            .map(|roleid| guild.roles.get(roleid).unwrap())
             .collect();
         roles.sort_unstable_by_key(|role| role.position);
         roles.last().copied()
