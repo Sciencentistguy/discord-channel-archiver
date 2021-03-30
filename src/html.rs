@@ -121,13 +121,6 @@ pub async fn write_html<P: AsRef<Path>>(
             .get_highest_role(&message.author, guild)
             .await;
 
-        let author_avatar_container = format!(
-            r#"<div class="chatlog__author-avatar-container">
-    <img class="chatlog__author-avatar" src="{}" alt="Avatar" title="Avatar" />
-</div>"#,
-            author.face()
-        );
-
         let message_timestamp = format!(
             r#"<span class="chatlog__timestamp">{}</span>"#,
             message.timestamp
@@ -150,7 +143,9 @@ pub async fn write_html<P: AsRef<Path>>(
 
         let message_group = format!(
             r#"<div class="chatlog__message-group">
-    {}
+    <div class="chatlog__author-avatar-container">
+        <img class="chatlog__author-avatar" src="{}" alt="Avatar" title="Avatar" />
+    </div>
     <div class="chatlog__messages">
         {}
         {}
@@ -168,7 +163,7 @@ pub async fn write_html<P: AsRef<Path>>(
         </div>
     </div>
 </div>"#,
-            author_avatar_container,
+            author.face(),
             author_name_container,
             message_timestamp,
             message.id.to_string(),
@@ -270,6 +265,10 @@ impl<'outer> MessageRenderer<'outer> {
             // a formatted message will exceed 8000 characters
             let mut out = String::with_capacity(8000 * std::mem::size_of::<char>());
 
+            let mut urls = Vec::new();
+
+            let mut lone_image_url = false;
+
             let split = content.split("```");
             for (c, block) in split.enumerate() {
                 if c & 1 == 0 {
@@ -279,16 +278,27 @@ impl<'outer> MessageRenderer<'outer> {
                         let split = block.split('`');
                         for (c, block) in split.enumerate() {
                             if c & 1 == 0 {
-                                let block = INLINE_CODE_REGEX.replace_all(
-                                    &block,
-                                    |capts: &regex::Captures| {
-                                        trace!("Found inline code block in '{}'", content);
-                                        format!(
-                                            r#"<code class="pre pre--inline">{}</code>"#,
-                                            &capts[1]
-                                        )
-                                    },
-                                );
+                                let mut block = block.to_string();
+
+                                // URLs
+                                while let Some(m) = URL_REGEX.find(block.as_str()) {
+                                    trace!("Found URL '{}' in '{}'", m.as_str(), content);
+                                    if m.as_str() == block
+                                        && IMAGE_FILE_EXTS.iter().any(|x| m.as_str().ends_with(x))
+                                    {
+                                        lone_image_url = true;
+                                        urls.push(m.as_str().to_string());
+                                        block = block.replace(m.as_str(), "!!URL_EMBED!!");
+                                        break;
+                                    }
+                                    let s = if m.as_str().contains("<br>") {
+                                        &m.as_str()[..m.as_str().find('<').unwrap()]
+                                    } else {
+                                        m.as_str()
+                                    };
+                                    urls.push(s.to_owned());
+                                    block = block.replace(s, "!!URL!!");
+                                }
 
                                 // Bold (double asterisk)
                                 let block =
@@ -331,60 +341,27 @@ impl<'outer> MessageRenderer<'outer> {
                                     },
                                 );
 
-                                // URLs
-                                let block =
-                                    URL_REGEX.replace_all(&block, |capts: &regex::Captures| {
-                                        trace!("Found URL '{}' in '{}'", &capts[1], &block);
-                                        let (url, closing_tags) = if capts[1].contains('<') {
-                                            warn!("URL '{}' contains html!", &capts[1]);
-                                            let pos = capts[1].find('<').unwrap();
-                                            (&capts[1][..pos], Some(&capts[1][pos..]))
-                                        } else {
-                                            (&capts[1], None)
-                                        };
-
-                                        if capts[0] == block
-                                            && IMAGE_FILE_EXTS.iter().any(|x| capts[1].ends_with(x))
-                                        {
-                                            format!(
-                                                r#"<span class="chatlog__embed-image-container">
-    <a href="{0:}" target="_blank">
-        <img class="chatlog__embed-image" title="{0:}", src="{0:}" alt="{0:}"/>
-    </a>
-</span><br>"#,
-                                                url
-                                            )
-                                        } else {
-                                            format!(
-                                                r#"<a href="{0}">{0}</a>{1}"#,
-                                                url,
-                                                closing_tags.unwrap_or("")
-                                            )
-                                        }
-                                    });
-
                                 // Custom (non-unicode) emoji
-                                let block =
-                        CUSTOM_EMOJI_REGEX.replace_all(&block, |capts: &regex::Captures| {
-                            if &capts[1] == r"\" {
-                                return capts[0][1..capts[0].len()].replace(":", "&#58;");
-                            }
+                                let block = CUSTOM_EMOJI_REGEX.replace_all(&block, |capts: &regex::Captures| {
+                                    if &capts[1] == r"\" {
+                                        return capts[0][1..capts[0].len()].replace(":", "&#58;");
+                                    }
 
-                            let animated = &capts[2] == "a";
-                            let name = &capts[3];
-                            let id = &capts[4];
+                                    let animated = &capts[2] == "a";
+                                    let name = &capts[3];
+                                    let id = &capts[4];
 
-                            trace!("Found custom emoji '{}' in '{}'", name, block);
-                            let url = match animated {
-                                true => format!("https://cdn.discordapp.com/emojis/{}.gif", id),
-                                false => format!("https://cdn.discordapp.com/emojis/{}.png", id),
-                            };
+                                    trace!("Found custom emoji '{}' in '{}'", name, block);
+                                    let url = match animated {
+                                        true => format!("https://cdn.discordapp.com/emojis/{}.gif", id),
+                                        false => format!("https://cdn.discordapp.com/emojis/{}.png", id),
+                                    };
 
-                            format!(
-                                r#"<img class="emoji" src="{0:}" alt="{1:}" title="{1:}"/>"#,
-                                url, &capts[1]
-                            )
-                        });
+                                    format!(
+                                        r#"<img class="emoji" src="{0:}" alt="{1:}" title="{1:}"/>"#,
+                                        url, &capts[1]
+                                    )
+                                });
 
                                 // Emoji (unicode)
                                 let block =
@@ -460,7 +437,7 @@ impl<'outer> MessageRenderer<'outer> {
                                                     self.ctx
                                                         .http
                                                         .get_user(*uid.as_u64())
-                                                        .await // TODO make this synchronous somehow
+                                                        .await
                                                         .map(|x| x.name)
                                                         .unwrap_or_else(|_| uid
                                                             .as_u64()
@@ -470,6 +447,32 @@ impl<'outer> MessageRenderer<'outer> {
                                         }
                                     }
                                 }
+
+                                // URLs part 2
+                                if lone_image_url {
+                                    trace!("image embed ");
+                                    debug_assert!(urls.len() == 1);
+                                    block = block.replace(
+                                        "!!URL_EMBED!!",
+                                        &format!(
+                                            r#"<span class="chatlog__embed-image-container">
+    <a href="{0:}" target="_blank">
+        <img class="chatlog__embed-image" title="{0:}", src="{0:}" alt="{0:}"/>
+    </a>
+</span><br>"#,
+                                            urls.first().unwrap()
+                                        ),
+                                    );
+                                } else {
+                                    for url in urls.iter() {
+                                        block = block.replacen(
+                                            "!!URL!!",
+                                            format!(r#"<a href="{0}">{0}</a>"#, url).as_str(),
+                                            1,
+                                        );
+                                    }
+                                }
+
                                 out.push_str(block.as_str());
                             } else {
                                 trace!("Found inline code block '{}' in '{}'", block, content);
