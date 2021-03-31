@@ -363,18 +363,6 @@ impl<'outer> MessageRenderer<'outer> {
                                     )
                                 });
 
-                                // Emoji (unicode)
-                                let block =
-                                    EMOJI_REGEX.replace_all(&block, |capts: &regex::Captures| {
-                                        trace!("Found emoji '{}' in '{}'", &capts[0], block);
-                                        let emoji_name = &capts[1];
-                                        let emoji_symbol = match gh_emoji::get(emoji_name) {
-                                            Some(x) => x,
-                                            None => emoji_name,
-                                        };
-                                        emoji_symbol.to_string()
-                                    });
-
                                 // Channel mentions
                                 let block = CHANNEL_MENTION_REGEX.replace_all(
                                     &block,
@@ -390,10 +378,7 @@ impl<'outer> MessageRenderer<'outer> {
                                             Some(x) => format!("<span class=mention>#{}</span>", x),
                                             None => {
                                                 warn!("Channel mentioned that does not exist");
-                                                format!(
-                                                    "<span class=mention>#{}</span>",
-                                                    cid.to_string()
-                                                )
+                                                format!("<span class=mention>#{}</span>", cid)
                                             }
                                         }
                                     },
@@ -544,13 +529,8 @@ impl<'outer> MessageRenderer<'outer> {
     async fn get_highest_role(
         &mut self,
         user: &User,
-        guild: &'outer PartialGuild,
-    ) -> Option<&'outer Role> {
-        if self.members.keys().find(|x| *x == &user.id).is_none() {
-            warn!("Message author found who is not a member of the channel");
-            return None;
-        }
-
+        guild: &'context PartialGuild,
+    ) -> Option<&'context Role> {
         let member = match self.get_member(&user.id).await {
             Some(x) => x,
             None => return None,
