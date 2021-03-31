@@ -36,7 +36,7 @@ lazy_static! {
     static ref STRIKETHROUGH_REGEX: Regex = Regex::new(r"~~([^~]+)~~").unwrap();
     static ref EMOJI_REGEX: Regex = Regex::new(r":(\w+):").unwrap();
     static ref CHANNEL_MENTION_REGEX: Regex = Regex::new(r"&lt;#(\d+)&gt;").unwrap();
-    static ref USER_MENTION_REGEX: Regex = Regex::new(r"&lt;@!(\d+)&gt;").unwrap();
+    static ref USER_MENTION_REGEX: Regex = Regex::new(r"&lt;@!?(\d+)&gt;").unwrap();
     static ref USER_MENTION_UNSANITISED_REGEX: Regex = Regex::new(r"<@!(\d+)>").unwrap();
     static ref URL_REGEX: Regex = Regex::new(
         r"(?:&lt;)?((?:(?:http|https|ftp)://)(?:\S+(?::\S*)?@)?(?:(?:(?:[1-9]\d?|1\d\d|2[01]\d|22[0-3])(?:\.(?:1?\d{1,2}|2[0-4]\d|25[0-5])){2}(?:\.(?:[0-9]\d?|1\d\d|2[0-4]\d|25[0-4]))|(?:(?:[a-z\u00a1-\uffff0-9]+-?)*[a-z\u00a1-\uffff0-9]+)(?:\.(?:[a-z\u00a1-\uffff0-9]+-?)*[a-z\u00a1-\uffff0-9]+)*(?:\.(?:[a-z\u00a1-\uffff]{2,})))|localhost)(?::\d{2,5})?(?:(/|\?|#)[^\s]*)?)(?:&gt;)?"
@@ -193,17 +193,18 @@ pub async fn write_html<P: AsRef<Path>>(
     Ok(())
 }
 
-struct MessageRenderer<'outer> {
+struct MessageRenderer<'context> {
     channel_names: HashMap<u64, String>,
     members: HashMap<UserId, Option<Member>>,
-    guild: &'outer PartialGuild,
-    ctx: &'outer Context,
+    usernames: HashMap<UserId, Option<String>>,
+    guild: &'context PartialGuild,
+    ctx: &'context Context,
 }
 
-impl<'outer> MessageRenderer<'outer> {
+impl<'context> MessageRenderer<'context> {
     fn new(
-        ctx: &'outer Context,
-        guild: &'outer PartialGuild,
+        ctx: &'context Context,
+        guild: &'context PartialGuild,
         mut channels: HashMap<ChannelId, GuildChannel>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         trace!("Begin getting channel names");
@@ -215,12 +216,44 @@ impl<'outer> MessageRenderer<'outer> {
         Ok(Self {
             channel_names,
             members: HashMap::new(),
+            usernames: HashMap::new(),
             guild,
             ctx,
         })
     }
 
-    async fn get_member(&mut self, user_id: &UserId) -> Option<&Member> {
+    async fn get_username_cached(&mut self, user_id: &UserId) -> Option<&str> {
+        if let Some(m) = self.usernames.get(user_id) {
+            // It is more obvious that this is safe with a match
+            #[allow(clippy::manual_map)]
+            match m {
+                // SAFETY: These two borrows *are* mutually exclusive, and therefore tricking the
+                // borrow checker here is fine.
+                Some(x) => Some(unsafe { (*(x as *const String)).as_str() }),
+                None => None,
+            }
+        } else {
+            match self
+                .ctx
+                .http
+                .get_user(*user_id.as_u64())
+                .await
+                .map(|x| x.name)
+            {
+                Ok(x) => {
+                    self.usernames.insert(*user_id, Some(x));
+                    self.usernames.get(&user_id).unwrap().as_deref()
+                }
+                Err(_) => {
+                    warn!("User id '{}' is not associated with a user.", user_id);
+                    self.usernames.insert(*user_id, None);
+                    None
+                }
+            }
+        }
+    }
+
+    async fn get_member_cached(&mut self, user_id: &UserId) -> Option<&Member> {
         if let Some(m) = self.members.get(user_id) {
             // It is more obvious that this is safe with a match
             #[allow(clippy::manual_map)]
@@ -267,8 +300,6 @@ impl<'outer> MessageRenderer<'outer> {
 
             let mut urls = Vec::new();
 
-            let mut lone_image_url = false;
-
             let split = content.split("```");
             for (c, block) in split.enumerate() {
                 if c & 1 == 0 {
@@ -283,13 +314,18 @@ impl<'outer> MessageRenderer<'outer> {
                                 // URLs
                                 while let Some(m) = URL_REGEX.find(block.as_str()) {
                                     trace!("Found URL '{}' in '{}'", m.as_str(), content);
-                                    if m.as_str() == block
+                                    if m.as_str() == content
                                         && IMAGE_FILE_EXTS.iter().any(|x| m.as_str().ends_with(x))
                                     {
-                                        lone_image_url = true;
-                                        urls.push(m.as_str().to_string());
-                                        block = block.replace(m.as_str(), "!!URL_EMBED!!");
-                                        break;
+                                        trace!("Found image embed '{}'.", m.as_str());
+                                        return format!(
+                                            r#"<span class="chatlog__embed-image-container">
+    <a href="{0:}" target="_blank">
+        <img class="chatlog__embed-image" title="{0:}", src="{0:}" alt="{0:}"/>
+    </a>
+</span><br>"#,
+                                            m.as_str()
+                                        );
                                     }
                                     let s = if m.as_str().contains("<br>") {
                                         &m.as_str()[..m.as_str().find('<').unwrap()]
@@ -402,7 +438,7 @@ impl<'outer> MessageRenderer<'outer> {
                                         .parse::<u64>()
                                         .unwrap()
                                         .into();
-                                    let member = self.get_member(&uid).await;
+                                    let member = self.get_member_cached(&uid).await;
                                     block = match member {
                                         Some(x) => block.replace(
                                             m.as_str(),
@@ -412,50 +448,33 @@ impl<'outer> MessageRenderer<'outer> {
                                             ),
                                         ),
                                         None => {
-                                            warn!(
-                                                "User mentioned that's not a member of the channel"
-                                            );
+                                            let name = self.get_username_cached(&uid).await;
                                             block.replace(
                                                 m.as_str(),
-                                                &format!(
-                                                    "<span class=mention>@{}</span>",
-                                                    self.ctx
-                                                        .http
-                                                        .get_user(*uid.as_u64())
-                                                        .await
-                                                        .map(|x| x.name)
-                                                        .unwrap_or_else(|_| uid
-                                                            .as_u64()
-                                                            .to_string())
-                                                ),
+                                                &match name {
+                                                    Some(name) => {
+                                                        format!(
+                                                            "<span class=mention>@{}</span>",
+                                                            name
+                                                        )
+                                                    }
+                                                    None => format!(
+                                                        "<span class=mention>@{}</span>",
+                                                        uid
+                                                    ),
+                                                },
                                             )
                                         }
                                     }
                                 }
 
                                 // URLs part 2
-                                if lone_image_url {
-                                    trace!("image embed ");
-                                    debug_assert!(urls.len() == 1);
-                                    block = block.replace(
-                                        "!!URL_EMBED!!",
-                                        &format!(
-                                            r#"<span class="chatlog__embed-image-container">
-    <a href="{0:}" target="_blank">
-        <img class="chatlog__embed-image" title="{0:}", src="{0:}" alt="{0:}"/>
-    </a>
-</span><br>"#,
-                                            urls.first().unwrap()
-                                        ),
+                                for url in urls.iter() {
+                                    block = block.replacen(
+                                        "!!URL!!",
+                                        format!(r#"<a href="{0}">{0}</a>"#, url).as_str(),
+                                        1,
                                     );
-                                } else {
-                                    for url in urls.iter() {
-                                        block = block.replacen(
-                                            "!!URL!!",
-                                            format!(r#"<a href="{0}">{0}</a>"#, url).as_str(),
-                                            1,
-                                        );
-                                    }
                                 }
 
                                 out.push_str(block.as_str());
@@ -517,7 +536,7 @@ impl<'outer> MessageRenderer<'outer> {
 
     async fn get_name_used<'a>(&'a mut self, user: &'a User) -> &'a str {
         match self
-            .get_member(&user.id)
+            .get_member_cached(&user.id)
             .await
             .and_then(|ref x| x.nick.as_ref())
         {
@@ -531,7 +550,7 @@ impl<'outer> MessageRenderer<'outer> {
         user: &User,
         guild: &'context PartialGuild,
     ) -> Option<&'context Role> {
-        let member = match self.get_member(&user.id).await {
+        let member = match self.get_member_cached(&user.id).await {
             Some(x) => x,
             None => return None,
         };

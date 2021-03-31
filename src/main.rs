@@ -86,12 +86,25 @@ async fn archive(
         let mut x = 100;
         while x == 100 {
             let last_msg = (&messages).last().unwrap();
-            let new_msgs = channel
+            let new_msgs = match channel
                 .id
                 .messages(&ctx, |retreiver| retreiver.before(last_msg.id).limit(100))
-                .await?;
+                .await
+            {
+                Ok(x) => x,
+                Err(e) => {
+                    warn!("Discord returned an error '{}'. Waiting 5 seconds before retrying", e);
+                    tokio::time::sleep(std::time::Duration::from_millis(5000)).await;
+                    continue;
+                }
+            };
             x = new_msgs.len();
             messages.extend(new_msgs.into_iter());
+            trace!(
+                "Downloaded {} more messages, for a total of {} so far",
+                x,
+                messages.len()
+            );
         }
         messages.reverse();
         messages
