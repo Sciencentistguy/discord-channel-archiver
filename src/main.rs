@@ -10,9 +10,8 @@ use std::io;
 use std::io::Write;
 use std::str::FromStr;
 
-use futures::executor::block_on;
-use futures::future::join_all;
-use futures::stream::FuturesUnordered;
+use eyre::Context as EyreContext;
+use eyre::Result;
 use lazy_static::lazy_static;
 use log::*;
 use regex::Regex;
@@ -24,7 +23,6 @@ use serenity::model::guild::Guild;
 use serenity::model::id::ChannelId;
 use serenity::prelude::*;
 use structopt::StructOpt;
-use text_io::read;
 
 const USAGE_STRING: &str = r#"Invalid syntax.
 Correct usage is `!archive <channel> [mode(s)]`, where `<channel>` is the channel you want to archive, and `[mode(s)]` is a possibly comma-separated list of modes.
@@ -83,7 +81,7 @@ async fn archive(
     channel: &GuildChannel,
     guild: &Guild,
     modes: ArchivalMode,
-) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+) -> Result<Vec<String>> {
     trace!("Begin downloading messages");
     let start = std::time::Instant::now();
     let messages = {
@@ -241,17 +239,14 @@ impl EventHandler for Handler {
                     modes
                 );
 
-                let created_files = match archive(&ctx, &channel, &guild, modes).await {
+                let created_files = archive(&ctx, &channel, &guild, modes)
+                    .await
+                    .wrap_err(format!("Failed to archive channel '{}'", channel));
+
+                let created_files = match created_files {
                     Ok(x) => x,
                     Err(e) => {
-                        let errmsg = format!(
-                            "Failed to archive channel '{}', due to error '{}'.",
-                            channel.name,
-                            e.as_ref()
-                        );
-                        drop(e);
-                        error!("{}", &errmsg);
-                        block_on(msg.reply(&ctx, &errmsg)).expect("Failed to send message");
+                        error!("{}", e);
                         return;
                     }
                 };
@@ -384,7 +379,7 @@ impl EventHandler for Handler {
     }
 }
 
-pub fn confirm(prompt: &str, default: bool) -> std::io::Result<bool> {
+pub fn confirm(prompt: &str, default: bool) -> Result<bool> {
     let mut buf = String::new();
     loop {
         if default {
@@ -394,7 +389,9 @@ pub fn confirm(prompt: &str, default: bool) -> std::io::Result<bool> {
         }
 
         io::stdout().lock().flush()?;
-        io::stdin().read_line(&mut buf)?;
+        io::stdin()
+            .read_line(&mut buf)
+            .wrap_err("Failed to read response from stdin")?;
         buf.make_ascii_lowercase();
 
         match &*(buf.trim_end()) {

@@ -6,6 +6,8 @@ use std::path::Path;
 
 use lazy_static::lazy_static;
 
+use eyre::Context as EyreContext;
+use eyre::Result;
 use serenity::model::channel::GuildChannel;
 use serenity::model::channel::Message;
 use serenity::model::guild::Guild;
@@ -108,7 +110,7 @@ pub async fn write_html<P: AsRef<Path>>(
 
     let channels = guild.channels(&ctx).await?;
 
-    let mut message_renderer = MessageRenderer::new(&ctx, &guild, channels)?;
+    let mut message_renderer = MessageRenderer::new(&ctx, &guild, channels);
 
     trace!("Begin saving messages");
     for (i, message) in messages.iter().enumerate() {
@@ -187,7 +189,7 @@ pub async fn write_html<P: AsRef<Path>>(
     );
 
     trace!("Writing html file {:?}", path.as_ref());
-    fs::write(path, html)?;
+    fs::write(path, html).wrap_err("Failed to write file to filesystem")?;
 
     info!("HTML generation complete.");
 
@@ -207,14 +209,14 @@ impl<'context> MessageRenderer<'context> {
         ctx: &'context Context,
         guild: &'context Guild,
         mut channels: HashMap<ChannelId, GuildChannel>,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    ) -> Self {
         trace!("Begin getting channel names");
         let mut channel_names = HashMap::new();
         for (id, channel) in channels.iter_mut() {
             channel_names.insert(*id.as_u64(), std::mem::take(&mut channel.name));
         }
 
-        Ok(Self {
+        Self {
             channel_names,
             members: guild
                 .members
@@ -224,7 +226,7 @@ impl<'context> MessageRenderer<'context> {
             usernames: HashMap::new(),
             guild,
             ctx,
-        })
+        }
     }
 
     async fn get_username_cached(&mut self, user_id: &UserId) -> Option<&str> {
