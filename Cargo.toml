@@ -25,3 +25,7 @@ tokio = {version = "1.0", features = ["macros", "rt-multi-thread"]}
 default-features=false
 features=["client", "gateway", "rustls_backend", "model", "cache"]
 version = "0.10.2"
+
+[profile.release]
+debug = true
+

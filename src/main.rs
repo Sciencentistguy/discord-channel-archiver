@@ -1,3 +1,6 @@
+#![warn(clippy::pedantic)]
+
+mod emoji;
 mod file;
 mod html;
 mod json;
@@ -5,13 +8,11 @@ mod json;
 use std::env;
 use std::io;
 use std::io::Write;
-use std::path::PathBuf;
 use std::str::FromStr;
 
 use futures::executor::block_on;
 use futures::future::join_all;
 use futures::stream::FuturesUnordered;
-use futures::StreamExt;
 use lazy_static::lazy_static;
 use log::*;
 use regex::Regex;
@@ -19,19 +20,22 @@ use serenity::async_trait;
 use serenity::model::channel::GuildChannel;
 use serenity::model::channel::Message;
 use serenity::model::gateway::Ready;
-use serenity::model::guild::PartialGuild;
+use serenity::model::guild::Guild;
 use serenity::model::id::ChannelId;
 use serenity::prelude::*;
 use structopt::StructOpt;
 use text_io::read;
 
-const PATH: &str = "/dev/shm";
 const USAGE_STRING: &str = r#"Invalid syntax.
 Correct usage is `!archive <channel> [mode(s)]`, where `<channel>` is the channel you want to archive, and `[mode(s)]` is a possibly comma-separated list of modes.
 Valid modes are: `json,html`. All modes are enabled if this parameter is omitted."#;
 
 lazy_static! {
     static ref COMMAND_REGEX: Regex = Regex::new(r"^!archive +<#(\d+)> *([\w,]+)?$").unwrap();
+}
+
+lazy_static! {
+    static ref OPTIONS: Opt = Opt::from_args();
 }
 
 #[tokio::main]
@@ -42,14 +46,15 @@ async fn main() {
     }
     pretty_env_logger::init();
 
-    let opts = Opt::from_args();
-    let token = if opts.token.is_some() {
-        opts.token.unwrap()
-    } else if opts.token_filename.is_some() {
-        std::fs::read_to_string(opts.token_filename.unwrap()).expect("File does not exist")
+    let token = if let Some(ref token) = OPTIONS.token {
+        token.to_string()
+    } else if let Some(ref filename) = OPTIONS.token_filename {
+        std::fs::read_to_string(filename).expect("File does not exist")
+    } else if let Ok(token) = env::var("DISCORD_TOKEN") {
+        token
     } else {
-        env::var("DISCORD_TOKEN")
-            .expect("Expected either --token, --token-filename, or a token in the environment")
+        eprintln!("Expected either --token, --token-filename, or a token in the environment");
+        return;
     };
 
     println!("Token: {}", token);
@@ -76,7 +81,7 @@ async fn main() {
 async fn archive(
     ctx: &Context,
     channel: &GuildChannel,
-    guild: &PartialGuild,
+    guild: &Guild,
     modes: ArchivalMode,
 ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     trace!("Begin downloading messages");
@@ -93,7 +98,10 @@ async fn archive(
             {
                 Ok(x) => x,
                 Err(e) => {
-                    warn!("Discord returned an error '{}'. Waiting 5 seconds before retrying", e);
+                    warn!(
+                        "Discord returned an error '{}'. Waiting 5 seconds before retrying",
+                        e
+                    );
                     tokio::time::sleep(std::time::Duration::from_millis(5000)).await;
                     continue;
                 }
@@ -116,12 +124,12 @@ async fn archive(
         (end - start).as_secs_f64()
     );
 
-    let output_filename = format!("{}/{}-{}", PATH, guild.name, channel.name);
+    let output_filename = format!("{}/{}-{}", OPTIONS.path, guild.name, channel.name);
 
     let mut created_files: Vec<String> = Vec::new();
     if modes.json {
         let filename = format!("{}.json", output_filename);
-        while let Err(x) = json::write_json(&messages, &filename, &ctx).await {
+        while let Err(x) = json::write_json(&ctx, &guild, &messages, &filename).await {
             error!("Failed to write json: {}", x);
             if !confirm("Retry?", true)? {
                 break;
@@ -132,7 +140,7 @@ async fn archive(
 
     if modes.html {
         let filename = format!("{}.html", output_filename);
-        while let Err(x) = html::write_html(&messages, &guild, &channel, &filename, &ctx).await {
+        while let Err(x) = html::write_html(&ctx, &guild, &channel, &messages, &filename).await {
             error!("Failed to write html: {}", x);
             if !confirm("Retry?", true)? {
                 break;
@@ -143,42 +151,6 @@ async fn archive(
 
     info!("Archive complete.");
     Ok(created_files)
-}
-
-async fn archive_emoji(ctx: &Context, msg: &Message, guild: &PartialGuild) {
-    info!("Starting emoji archive");
-    let mut output_directory = PathBuf::from(PATH);
-    output_directory.push(format!(
-        "{}-{}",
-        guild.name.replace(' ', "-").to_lowercase(),
-        chrono::Utc::now().format("%Y-%m-%dT%H-%M-%S")
-    ));
-
-    let mut fut: FuturesUnordered<_> = guild
-        .emojis
-        .iter()
-        .map(|(_, emoji)| {
-            let url = emoji.url();
-            let ext = &url[url
-                .rfind('.')
-                .expect("Emoji url does not have a file extension")
-                + 1..];
-            let download_path = output_directory.join(format!("{}.{}", emoji.name, ext));
-            file::download_url(url, download_path)
-        })
-        .collect();
-    #[allow(clippy::redundant_pattern_matching)]
-    while let Some(_) = fut.next().await {}
-    msg.reply(
-        &ctx,
-        format!(
-            "Archived {} emoji into `{}`",
-            guild.emojis.len(),
-            output_directory.as_os_str().to_str().unwrap()
-        ),
-    )
-    .await
-    .expect("Failed to reply to message");
 }
 
 struct Handler;
@@ -197,21 +169,17 @@ impl std::fmt::Display for ArchivalMode {
 
 #[async_trait]
 impl EventHandler for Handler {
+    //async fn cache_ready(&self, ctx: Context, guilds: Vec<serenity::model::id::GuildId>) {
+    //for g in guilds {
+    //println!("guild: {:#?}", ctx.cache.guild(g).await);
+    //}
+    ////println!("ctx.cache: {:#?}, guilds: {:#?}", ctx.cache.guilds().await, guilds);
+    //}
+
     async fn message(&self, ctx: Context, msg: Message) {
         if msg.content.starts_with("!archive") {
-            if msg.content.starts_with("!archive-emoji") {
-                let guild = msg
-                    .channel_id
-                    .to_channel(&ctx)
-                    .await
-                    .ok()
-                    .and_then(|x| x.guild())
-                    .unwrap()
-                    .guild_id
-                    .to_partial_guild(&ctx)
-                    .await
-                    .unwrap();
-                archive_emoji(&ctx, &msg, &guild).await;
+            if msg.content.starts_with("!archive_emoji") {
+                emoji::archive_emoji(&ctx, &msg).await;
             } else {
                 let capts = COMMAND_REGEX.captures(&msg.content);
                 if capts.as_ref().and_then(|x| x.get(0)).is_none() {
@@ -252,15 +220,26 @@ impl EventHandler for Handler {
                 .expect("Channel not found")
                 .guild()
                 .expect("Invalid channel type");
-                let guild = channel.guild_id.to_partial_guild(&ctx).await.unwrap();
 
-                info!("Archive started by user '{}#{:04}' in guild '{}', in channel '{}', with modes '{}'",
-                msg.author.name,
-                msg.author.discriminator,
-                guild.name,
-                channel.name,
-                modes
-            );
+                let guild = match msg.guild_id {
+                    Some(x) => ctx.cache.guild(x).await.unwrap(),
+                    None => {
+                        msg.reply(&ctx, "This bot must be used in a guild channel.")
+                            .await
+                            .expect("Failed to reply to message.");
+                        error!("This bot must be used in a guild channel.");
+                        return;
+                    }
+                };
+
+                info!(
+                    "Archive started by user '{}#{:04}' in guild '{}', in channel '{}', with modes '{}'",
+                    msg.author.name,
+                    msg.author.discriminator,
+                    guild.name,
+                    channel.name,
+                    modes
+                );
 
                 let created_files = match archive(&ctx, &channel, &guild, modes).await {
                     Ok(x) => x,
@@ -290,10 +269,6 @@ impl EventHandler for Handler {
         }
     }
 
-    // Set a handler to be called on the `ready` event. This is called when a
-    // shard is booted, and a READY payload is sent by Discord. This payload
-    // contains data like the current user's guild Ids, current user data,
-    // private channels, and more.
     async fn ready(&self, ctx: Context, ready: Ready) {
         info!(
             "Bot logged in with username {} to {} guilds!",
@@ -301,18 +276,17 @@ impl EventHandler for Handler {
             ready.guilds.len()
         );
         loop {
+            // FIXME: This is broken
             let guilds = {
-                let mut v = join_all(
-                    ready
-                        .guilds
-                        .iter()
-                        .map(|g| g.id().to_partial_guild(&ctx))
-                        .collect::<Vec<_>>(),
-                )
-                .await
-                .into_iter()
-                .collect::<Result<Vec<_>, _>>()
-                .unwrap();
+                let mut v = Vec::new();
+                for id in ctx.cache.guilds().await {
+                    v.push(match ctx.cache.guild(id).await {
+                        Some(x) => x,
+                        None => {
+                            continue;
+                        }
+                    })
+                }
                 v.sort_unstable_by_key(|g| g.id);
                 v
             };
@@ -325,24 +299,32 @@ impl EventHandler for Handler {
             std::io::stdout().lock().flush().unwrap();
             let guild = {
                 let sel: usize = match text_io::try_read!("{}\n") {
+                    Ok(0) => {
+                        return;
+                    }
                     Ok(x) => x,
                     Err(_) => {
                         return;
                     }
                 };
-                if sel == 0 {
-                    return;
-                }
                 &guilds[sel - 1]
             };
+            //let guild = match msg.guild_id {
+            //Some(x) => ctx.cache.guild(x).await.unwrap(),
+            //None => {
+            //msg.reply(&ctx, "This bot must be used in a guild channel.")
+            //.await
+            //.expect("Failed to reply to message.");
+            //error!("This bot must be used in a guild channel.");
+            //return;
+            //}
+            //};
             println!("Selected '{}'", guild.name);
 
             let channels: Vec<_> = {
                 let mut v = guild
-                    .channels(&ctx)
-                    .await
-                    .unwrap()
-                    .into_iter()
+                    .channels
+                    .iter()
                     .filter_map(|(_, channel)| {
                         use serenity::model::channel::ChannelType::*;
                         match channel.kind {
@@ -382,14 +364,22 @@ impl EventHandler for Handler {
             print!(">> ");
             std::io::stdout().lock().flush().unwrap();
             let channel = {
-                let sel: usize = read!("{}\n");
-                &channels[sel]
+                let sel: usize = match text_io::try_read!("{}\n") {
+                    Ok(0) => {
+                        return;
+                    }
+                    Ok(x) => x,
+                    Err(_) => {
+                        return;
+                    }
+                };
+                channels[sel]
             };
             let modes = ArchivalMode {
                 json: true,
                 html: true,
             };
-            archive(&ctx, &channel, &guild, modes).await.unwrap();
+            archive(&ctx, channel, guild, modes).await.unwrap();
         }
     }
 }
@@ -427,4 +417,7 @@ struct Opt {
     /// Provide the name of a file containing the token
     #[structopt(short = "f", long)]
     token_filename: Option<String>,
+    /// The path to output files to
+    #[structopt(default_value = "/dev/shm/")]
+    path: String,
 }

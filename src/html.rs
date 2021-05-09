@@ -8,8 +8,8 @@ use lazy_static::lazy_static;
 
 use serenity::model::channel::GuildChannel;
 use serenity::model::channel::Message;
+use serenity::model::guild::Guild;
 use serenity::model::guild::Member;
-use serenity::model::guild::PartialGuild;
 use serenity::model::guild::Role;
 use serenity::model::id::ChannelId;
 use serenity::model::id::UserId;
@@ -46,11 +46,11 @@ lazy_static! {
 }
 
 pub async fn write_html<P: AsRef<Path>>(
-    messages: &[Message],
-    guild: &PartialGuild,
-    channel: &GuildChannel,
-    path: P,
     ctx: &Context,
+    guild: &Guild,
+    channel: &GuildChannel,
+    messages: &[Message],
+    path: P,
 ) -> Result<(), Box<dyn std::error::Error>> {
     trace!("Entered HTML generator.");
     let html = include_str!("html_templates/preamble_template.html");
@@ -186,6 +186,7 @@ pub async fn write_html<P: AsRef<Path>>(
         ),
     );
 
+    trace!("Writing html file {:?}", path.as_ref());
     fs::write(path, html)?;
 
     info!("HTML generation complete.");
@@ -197,14 +198,14 @@ struct MessageRenderer<'context> {
     channel_names: HashMap<u64, String>,
     members: HashMap<UserId, Option<Member>>,
     usernames: HashMap<UserId, Option<String>>,
-    guild: &'context PartialGuild,
+    guild: &'context Guild,
     ctx: &'context Context,
 }
 
 impl<'context> MessageRenderer<'context> {
     fn new(
         ctx: &'context Context,
-        guild: &'context PartialGuild,
+        guild: &'context Guild,
         mut channels: HashMap<ChannelId, GuildChannel>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         trace!("Begin getting channel names");
@@ -215,7 +216,11 @@ impl<'context> MessageRenderer<'context> {
 
         Ok(Self {
             channel_names,
-            members: HashMap::new(),
+            members: guild
+                .members
+                .iter()
+                .map(|(&k, v)| (k, Some(v.clone())))
+                .collect(),
             usernames: HashMap::new(),
             guild,
             ctx,
@@ -548,7 +553,7 @@ impl<'context> MessageRenderer<'context> {
     async fn get_highest_role(
         &mut self,
         user: &User,
-        guild: &'context PartialGuild,
+        guild: &'context Guild,
     ) -> Option<&'context Role> {
         let member = match self.get_member_cached(&user.id).await {
             Some(x) => x,

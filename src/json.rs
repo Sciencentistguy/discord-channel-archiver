@@ -7,6 +7,7 @@ use serde::Serialize;
 use serde_json::json;
 use serenity::model::channel::Message;
 use serenity::model::channel::MessageType;
+use serenity::model::guild::Guild;
 use serenity::prelude::Context;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -56,9 +57,10 @@ struct MessageJson<'a> {
 }
 
 pub async fn write_json<P: AsRef<Path>>(
+    ctx: &Context,
+    guild: &Guild,
     messages: &[Message],
     path: P,
-    ctx: &Context,
 ) -> Result<(), Box<dyn std::error::Error>> {
     trace!("Entered json writer.");
     let channel = messages
@@ -69,16 +71,15 @@ pub async fn write_json<P: AsRef<Path>>(
         .unwrap()
         .guild()
         .unwrap();
-    let guild = channel.guild_id.to_partial_guild(&ctx).await?;
 
     let guild_json = GuildJson {
-        id: *guild.id.as_u64(),
-        icon_url: (&guild).icon_url(),
+        id: guild.id.0,
+        icon_url: guild.icon_url(),
         name: guild.name.as_str(),
     };
 
     let channel_json = ChannelJson {
-        id: *channel.id.as_u64(),
+        id: channel.id.0,
         category: match channel.category_id {
             Some(x) => x.name(&ctx).await,
             None => None,
