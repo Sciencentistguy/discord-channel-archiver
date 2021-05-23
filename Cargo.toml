@@ -25,7 +25,7 @@ eyre = "0.6.5"
 [dependencies.serenity]
 default-features=false
 features=["client", "gateway", "rustls_backend", "model", "cache"]
-version = "0.10.2"
+version = "0.10.7"
 
 [profile.release]
 debug = true
