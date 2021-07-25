@@ -4,10 +4,9 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-use lazy_static::lazy_static;
-
 use eyre::Context as EyreContext;
 use eyre::Result;
+use once_cell::sync::Lazy;
 use serenity::model::channel::GuildChannel;
 use serenity::model::channel::Message;
 use serenity::model::guild::Guild;
@@ -27,25 +26,21 @@ const IMAGE_FILE_EXTS: [&str; 7] = [".jpg", ".jpeg", ".JPG", ".JPEG", ".png", ".
 
 const USE_DARK_MODE: bool = true;
 
-lazy_static! {
-    static ref CUSTOM_EMOJI_REGEX: Regex = Regex::new(r"(\\?)&lt;(a?):(\w+):(\d+)&gt;").unwrap();
-    static ref INLINE_CODE_REGEX: Regex = Regex::new(r"`([^`]*)`").unwrap();
-    static ref CODE_BLOCK_LANGUAGE_TAG_REGEX: Regex = Regex::new(r"^\w*<br>").unwrap();
-    static ref BOLD_REGEX: Regex = Regex::new(r"\*\*([^\*]+)\*\*").unwrap();
-    static ref UNDERLINE_REGEX: Regex = Regex::new(r"__([^_]+)__").unwrap();
-    static ref ITALICS_REGEX: Regex = Regex::new(r"\*([^\*]+)\*").unwrap();
-    static ref ITALICS_REGEX2: Regex = Regex::new(r"_([^_>]+)_").unwrap();
-    static ref STRIKETHROUGH_REGEX: Regex = Regex::new(r"~~([^~]+)~~").unwrap();
-    static ref EMOJI_REGEX: Regex = Regex::new(r":(\w+):").unwrap();
-    static ref CHANNEL_MENTION_REGEX: Regex = Regex::new(r"&lt;#(\d+)&gt;").unwrap();
-    static ref USER_MENTION_REGEX: Regex = Regex::new(r"&lt;@!?(\d+)&gt;").unwrap();
-    static ref USER_MENTION_UNSANITISED_REGEX: Regex = Regex::new(r"<@!(\d+)>").unwrap();
-    static ref URL_REGEX: Regex = Regex::new(
-        r"(?:&lt;)?((?:(?:http|https|ftp)://)(?:\S+(?::\S*)?@)?(?:(?:(?:[1-9]\d?|1\d\d|2[01]\d|22[0-3])(?:\.(?:1?\d{1,2}|2[0-4]\d|25[0-5])){2}(?:\.(?:[0-9]\d?|1\d\d|2[0-4]\d|25[0-4]))|(?:(?:[a-z\u00a1-\uffff0-9]+-?)*[a-z\u00a1-\uffff0-9]+)(?:\.(?:[a-z\u00a1-\uffff0-9]+-?)*[a-z\u00a1-\uffff0-9]+)*(?:\.(?:[a-z\u00a1-\uffff]{2,})))|localhost)(?::\d{2,5})?(?:(/|\?|#)[^\s]*)?)(?:&gt;)?"
-    )
-    .unwrap();
-    static ref QUOTE_REGEX: Regex = Regex::new(r"(?:^|<br>)((?:&gt;[^<\n]*(?:<br>)?)+)").unwrap();
-}
+static CUSTOM_EMOJI_REGEX: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(\\?)&lt;(a?):(\w+):(\d+)&gt;").unwrap());
+static CODE_BLOCK_LANGUAGE_TAG_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"^\w*<br>").unwrap());
+static BOLD_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"\*\*([^\*]+)\*\*").unwrap());
+static UNDERLINE_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"__([^_]+)__").unwrap());
+static ITALICS_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"\*([^\*]+)\*").unwrap());
+static ITALICS_REGEX2: Lazy<Regex> = Lazy::new(|| Regex::new(r"_([^_>]+)_").unwrap());
+static STRIKETHROUGH_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"~~([^~]+)~~").unwrap());
+static CHANNEL_MENTION_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"&lt;#(\d+)&gt;").unwrap());
+static USER_MENTION_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"&lt;@!?(\d+)&gt;").unwrap());
+static URL_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new( r"(?:&lt;)?((?:(?:http|https|ftp)://)(?:\S+(?::\S*)?@)?(?:(?:(?:[1-9]\d?|1\d\d|2[01]\d|22[0-3])(?:\.(?:1?\d{1,2}|2[0-4]\d|25[0-5])){2}(?:\.(?:[0-9]\d?|1\d\d|2[0-4]\d|25[0-4]))|(?:(?:[a-z\u00a1-\uffff0-9]+-?)*[a-z\u00a1-\uffff0-9]+)(?:\.(?:[a-z\u00a1-\uffff0-9]+-?)*[a-z\u00a1-\uffff0-9]+)*(?:\.(?:[a-z\u00a1-\uffff]{2,})))|localhost)(?::\d{2,5})?(?:(/|\?|#)[^\s]*)?)(?:&gt;)?") .unwrap()
+});
+static QUOTE_REGEX: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?:^|<br>)((?:&gt;[^<\n]*(?:<br>)?)+)").unwrap());
 
 pub async fn write_html<P: AsRef<Path>>(
     ctx: &Context,

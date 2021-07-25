@@ -1,5 +1,3 @@
-#![warn(clippy::pedantic)]
-
 mod emoji;
 mod file;
 mod html;
@@ -12,8 +10,8 @@ use std::str::FromStr;
 
 use eyre::Context as EyreContext;
 use eyre::Result;
-use lazy_static::lazy_static;
 use log::*;
+use once_cell::sync::Lazy;
 use regex::Regex;
 use serenity::async_trait;
 use serenity::model::channel::GuildChannel;
@@ -28,13 +26,9 @@ const USAGE_STRING: &str = r#"Invalid syntax.
 Correct usage is `!archive <channel> [mode(s)]`, where `<channel>` is the channel you want to archive, and `[mode(s)]` is a possibly comma-separated list of modes.
 Valid modes are: `json,html`. All modes are enabled if this parameter is omitted."#;
 
-lazy_static! {
-    static ref COMMAND_REGEX: Regex = Regex::new(r"^!archive +<#(\d+)> *([\w,]+)?$").unwrap();
-}
-
-lazy_static! {
-    static ref OPTIONS: Opt = Opt::from_args();
-}
+static COMMAND_REGEX: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^!archive +<#(\d+)> *([\w,]+)?$").unwrap());
+static OPTIONS: Lazy<Opt> = Lazy::new(Opt::from_args);
 
 #[tokio::main]
 async fn main() {
