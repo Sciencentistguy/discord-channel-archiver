@@ -20,7 +20,7 @@ pub async fn archive_emoji(ctx: &Context, msg: &Message) {
         }
     };
     info!("Starting emoji archive");
-    let mut output_directory = PathBuf::from(&crate::OPTIONS.path);
+    let mut output_directory = PathBuf::from(&crate::OPTIONS.output_path);
     output_directory.push(format!(
         "{}-{}",
         guild.name.replace(' ', "-").to_lowercase(),

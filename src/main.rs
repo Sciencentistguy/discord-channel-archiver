@@ -116,7 +116,7 @@ async fn archive(
         (end - start).as_secs_f64()
     );
 
-    let output_filename = format!("{}/{}-{}", OPTIONS.path, guild.name, channel.name);
+    let output_filename = format!("{}/{}-{}", OPTIONS.output_path, guild.name, channel.name);
 
     let mut created_files: Vec<String> = Vec::new();
     if modes.json {
@@ -258,118 +258,12 @@ impl EventHandler for Handler {
         }
     }
 
-    async fn ready(&self, ctx: Context, ready: Ready) {
+    async fn ready(&self, _ctx: Context, ready: Ready) {
         info!(
             "Bot logged in with username {} to {} guilds!",
             ready.user.name,
             ready.guilds.len()
         );
-        loop {
-            // FIXME: This is broken
-            let guilds = {
-                let mut v = Vec::new();
-                for id in ctx.cache.guilds().await {
-                    v.push(match ctx.cache.guild(id).await {
-                        Some(x) => x,
-                        None => {
-                            continue;
-                        }
-                    })
-                }
-                v.sort_unstable_by_key(|g| g.id);
-                v
-            };
-            println!("Please select a guild:");
-            println!(" 0 - exit menu");
-            for (i, guild) in guilds.iter().enumerate() {
-                println!("{:2} - {}", i + 1, guild.name);
-            }
-            print!(">> ");
-            std::io::stdout().lock().flush().unwrap();
-            let guild = {
-                let sel: usize = match text_io::try_read!("{}\n") {
-                    Ok(0) => {
-                        return;
-                    }
-                    Ok(x) => x,
-                    Err(_) => {
-                        return;
-                    }
-                };
-                &guilds[sel - 1]
-            };
-            //let guild = match msg.guild_id {
-            //Some(x) => ctx.cache.guild(x).await.unwrap(),
-            //None => {
-            //msg.reply(&ctx, "This bot must be used in a guild channel.")
-            //.await
-            //.expect("Failed to reply to message.");
-            //error!("This bot must be used in a guild channel.");
-            //return;
-            //}
-            //};
-            println!("Selected '{}'", guild.name);
-
-            let channels: Vec<_> = {
-                let mut v = guild
-                    .channels
-                    .iter()
-                    .filter_map(|(_, channel)| {
-                        use serenity::model::channel::ChannelType::*;
-                        match channel.kind {
-                            Text => Some(channel),
-                            _ => None,
-                        }
-                    })
-                    .collect::<Vec<_>>();
-                v.sort_unstable_by_key(|c| c.id);
-                v
-            };
-
-            println!("Please select a channel:");
-            for (i, channel) in channels.iter().enumerate() {
-                println!(
-                    "{:2} - #{}{}",
-                    i,
-                    channel.name,
-                    if channel.category_id.is_some() {
-                        format!(
-                            " in ({:?})",
-                            channel
-                                .category_id
-                                .unwrap()
-                                .to_channel(&ctx)
-                                .await
-                                .unwrap()
-                                .guild()
-                                .map(|x| x.name)
-                                .unwrap()
-                        )
-                    } else {
-                        "".into()
-                    }
-                );
-            }
-            print!(">> ");
-            std::io::stdout().lock().flush().unwrap();
-            let channel = {
-                let sel: usize = match text_io::try_read!("{}\n") {
-                    Ok(0) => {
-                        return;
-                    }
-                    Ok(x) => x,
-                    Err(_) => {
-                        return;
-                    }
-                };
-                channels[sel]
-            };
-            let modes = ArchivalMode {
-                json: true,
-                html: true,
-            };
-            archive(&ctx, channel, guild, modes).await.unwrap();
-        }
     }
 }
 
@@ -396,6 +290,7 @@ pub fn confirm(prompt: &str, default: bool) -> Result<bool> {
         }
     }
 }
+
 #[derive(StructOpt, Debug)]
 #[structopt(
     name = "discord-channel-archiver",
@@ -410,5 +305,5 @@ struct Opt {
     token_filename: Option<String>,
     /// The path to output files to
     #[structopt(default_value = "/dev/shm/")]
-    path: String,
+    output_path: String,
 }
