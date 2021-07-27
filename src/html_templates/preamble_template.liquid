@@ -2,15 +2,15 @@
 <!DOCTYPE html>
 <html lang="en">
   <head>
-    <title>DISCORD_GUILD_NAME - DISCORD_CHANNEL_NAME</title>
+    <title>{{guild_name}} - {{channel_name}}</title>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width" />
 
     <style>
-      CORE_STYLESHEET
+      {{core_css}}
     </style>
     <style>
-      THEME_STYLESHEET
+      {{theme_css}}
     </style>
 
     <link
@@ -59,14 +59,29 @@
   </head>
   <body>
     <div class="preamble">
-      <div class="preamble__guild-icon-container">GUILD_ICON</div>
+          {% if guild_icon_url == "" %}
+            <div class="preamble__guild-icon-container" style="background-color: rgb(88, 101, 242)">
+              {{guild_icon_alt}}
+            </div>
+          {% else %}
+            <div class="preamble__guild-icon-container">
+              <img class="preamble__guild-icon" src="{{guild_icon_url}}" title="Guild icon"/>
+            </div>
+          {% endif %}
       <div class="preamble__entries-container">
-        <div class="preamble__entry">DISCORD_GUILD_NAME</div>
-        <div class="preamble__entry">DISCORD_CHANNEL_CATEGORY_SLASH_NAME</div>
-
-        CHANNEL_TOPIC_DIV
+        <div class="preamble__entry--server-name">{{guild_name}}</div>
+        <div class="preamble__entry--channel-name">
+            {% if category_name == "" %}
+                #{{channel_name}}
+            {% else %}
+                {{category_name | upcase}} / #{{channel_name}}
+            {% endif %}
+        </div>
+        {% unless channel_topic == "" %}
+            <div class="preamble__entry--channel-topic">{{channel_topic}}</div>
+        {% endunless %}
       </div>
     </div>
 
     <div class="chatlog">
-      <!--preamble ends here-->
+<!--preamble ends here-->

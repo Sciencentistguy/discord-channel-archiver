@@ -22,8 +22,10 @@ use regex::Regex;
 const CORE_THEME_CSS: &str = include_str!("html_templates/core.css");
 const DARK_THEME_CSS: &str = include_str!("html_templates/dark.css");
 const LIGHT_THEME_CSS: &str = include_str!("html_templates/light.css");
-const IMAGE_FILE_EXTS: [&str; 7] = [".jpg", ".jpeg", ".JPG", ".JPEG", ".png", ".PNG", ".gif"];
+const PREAMBLE_TEMPLATE: &str = include_str!("html_templates/preamble_template.liquid");
+const POSTAMBLE_TEMPLATE: &str = include_str!("html_templates/postamble_template.liquid");
 
+const IMAGE_FILE_EXTS: [&str; 7] = [".jpg", ".jpeg", ".JPG", ".JPEG", ".png", ".PNG", ".gif"];
 const USE_DARK_MODE: bool = true;
 
 static CUSTOM_EMOJI_REGEX: Lazy<Regex> =
@@ -50,57 +52,29 @@ pub async fn write_html<P: AsRef<Path>>(
     path: P,
 ) -> Result<(), Box<dyn std::error::Error>> {
     trace!("Entered HTML generator.");
-    let html = include_str!("html_templates/preamble_template.html");
-    let html = html.replace("DISCORD_GUILD_NAME", &guild.name);
-    let html = html.replace("DISCORD_CHANNEL_NAME", &channel.name);
 
-    let html = html.replace("CORE_STYLESHEET", CORE_THEME_CSS);
-
-    let html = if USE_DARK_MODE {
-        html.replace("THEME_STYLESHEET", DARK_THEME_CSS)
-    } else {
-        html.replace("THEME_STYLESHEET", LIGHT_THEME_CSS)
-    };
-
-    let html = html.replace(
-        "GUILD_ICON",
-        format!(
-            r#" <img
- class="preamble__guild-icon"
- src="{}"
- alt="{}"
- />"#,
-            guild.icon_url().unwrap_or_else(|| "".into()),
-            get_acronym_from_str(guild.name.as_str()),
-        )
-        .as_str(),
-    );
+    let liquid_parser = liquid::ParserBuilder::with_stdlib().build().unwrap();
+    let preamble_template = liquid_parser.parse(PREAMBLE_TEMPLATE).unwrap();
+    let postamble_template = liquid_parser.parse(POSTAMBLE_TEMPLATE).unwrap();
 
     let category_name = match channel.category_id {
         Some(x) => x.name(&ctx).await,
         None => None,
     };
 
-    let html = if category_name.is_some() {
-        html.replace(
-            "DISCORD_CHANNEL_CATEGORY_SLASH_NAME",
-            format!("{} / {}", category_name.unwrap(), channel.name).as_str(),
-        )
-    } else {
-        html.replace("DISCORD_CHANNEL_CATEGORY_SLASH_NAME", channel.name.as_str())
-    };
+    let liquid_objects = liquid::object!({
+        "guild_name": &guild.name,
+        "channel_name": &channel.name,
+        "core_css": CORE_THEME_CSS,
+        "theme_css": if USE_DARK_MODE {DARK_THEME_CSS} else {LIGHT_THEME_CSS},
+        "guild_icon_url": guild.icon_url().unwrap_or_else(String::new),
+        "guild_icon_alt": get_acronym_from_str(guild.name.as_str()),
+        "category_name": category_name.unwrap_or_else(String::new),
+        "channel_topic": channel.topic.as_deref().unwrap_or(""),
+    });
 
-    let mut html = if channel.topic.is_some() {
-        html.replace(
-            "CHANNEL_TOPIC_DIV",
-            &format!(
-                r#"<div class="preamble__entry preamble__entry--small">{}</div>"#,
-                channel.topic.as_ref().unwrap()
-            ),
-        )
-    } else {
-        html.replace("CHANNEL_TOPIC_DIV", "")
-    };
+    let mut html = preamble_template.render(&liquid_objects)?;
+
     trace!("Generated preamble");
 
     let channels = guild.channels(&ctx).await?;
@@ -172,7 +146,15 @@ pub async fn write_html<P: AsRef<Path>>(
     }
     trace!("Generated message html");
 
-    html.push_str(include_str!("html_templates/postamble_template.html"));
+    let postamble_liquid_objects = liquid::object!({
+        "num_exported_messages": messages.len(),
+    });
+
+    html.push_str(
+        postamble_template
+            .render(&postamble_liquid_objects)?
+            .as_str(),
+    );
 
     let html = html.replace(
         "EXPORTED_MESSAGES_NUMBER",

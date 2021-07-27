@@ -197,6 +197,7 @@ img {
 /* Preamble */
 
 .preamble {
+  /*font-family: Ginto, "Helvetica Neue", Helvetica, Arial, sans-serif;*/
   display: grid;
   margin: 0 0.3em 0.6em 0.3em;
   max-width: 100%;
@@ -205,11 +206,18 @@ img {
 
 .preamble__guild-icon-container {
   grid-column: 1;
+  display: flex;
+  width: 88px;
+  height: 88px;
+  justify-content: center;
+  align-items: center;
+  border-radius: 20px;
 }
 
 .preamble__guild-icon {
-  max-width: 88px;
-  max-height: 88px;
+  width: 88px;
+  height: 88px;
+  border-radius: 20px;
 }
 
 .preamble__entries-container {
@@ -217,12 +225,21 @@ img {
   margin-left: 0.6em;
 }
 
-.preamble__entry {
+.preamble__entry--server-name {
+  font-family: Ginto, "Helvetica Neue", Helvetica, Arial, sans-serif;
   font-size: 1.4em;
 }
 
-.preamble__entry--small {
-  font-size: 1em;
+.preamble__entry--channel-topic {
+  font-family: Ginto, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-size: 0.6em;
+  color: rgb(185, 187, 190);
+}
+
+.preamble__entry--channel-name {
+  font-family: Ginto, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-size: 0.75em;
+  font-weight: 600;
 }
 
 /* Chatlog */
