@@ -189,10 +189,13 @@ impl<'context> MessageRenderer<'context> {
             {
                 Ok(x) => {
                     self.usernames.insert(*user_id, Some(x));
-                    self.usernames.get(&user_id).unwrap().as_deref()
+                    self.usernames.get(&user_id).and_then(Option::as_deref)
                 }
-                Err(_) => {
-                    warn!("User id '{}' is not associated with a user.", user_id);
+                Err(e) => {
+                    warn!(
+                        "User id '{}' is not associated with a user. ({})",
+                        user_id, e
+                    );
                     self.usernames.insert(*user_id, None);
                     None
                 }
@@ -214,7 +217,7 @@ impl<'context> MessageRenderer<'context> {
             match self.guild.member(&self.ctx, user_id).await {
                 Ok(x) => {
                     self.members.insert(*user_id, Some(x));
-                    self.members.get(&user_id).unwrap().as_ref()
+                    self.members.get(&user_id).and_then(Option::as_ref)
                 }
                 Err(_) => {
                     warn!("User with id '{}' not found in channel.", user_id);
@@ -274,8 +277,8 @@ impl<'context> MessageRenderer<'context> {
                                             m.as_str()
                                         );
                                     }
-                                    let s = if m.as_str().contains("<br>") {
-                                        &m.as_str()[..m.as_str().find('<').unwrap()]
+                                    let s = if let Some(idx) = m.as_str().find("<br>") {
+                                        &m.as_str()[..idx]
                                     } else {
                                         m.as_str()
                                     };

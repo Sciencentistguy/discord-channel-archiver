@@ -82,7 +82,7 @@ async fn archive(
         let mut messages = channel.messages(&ctx, |r| r.limit(100)).await?;
         let mut x = 100;
         while x == 100 {
-            let last_msg = (&messages).last().unwrap();
+            let last_msg = messages.last().unwrap();
             let new_msgs = match channel
                 .id
                 .messages(&ctx, |retreiver| retreiver.before(last_msg.id).limit(100))
