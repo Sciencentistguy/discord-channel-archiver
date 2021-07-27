@@ -24,6 +24,7 @@ const DARK_THEME_CSS: &str = include_str!("html_templates/dark.css");
 const LIGHT_THEME_CSS: &str = include_str!("html_templates/light.css");
 const PREAMBLE_TEMPLATE: &str = include_str!("html_templates/preamble_template.liquid");
 const POSTAMBLE_TEMPLATE: &str = include_str!("html_templates/postamble_template.liquid");
+const MESSAGE_GROUP_TEMPLATE: &str = include_str!("html_templates/message_group.liquid");
 
 const IMAGE_FILE_EXTS: [&str; 7] = [".jpg", ".jpeg", ".JPG", ".JPEG", ".png", ".PNG", ".gif"];
 const USE_DARK_MODE: bool = true;
@@ -56,6 +57,7 @@ pub async fn write_html<P: AsRef<Path>>(
     let liquid_parser = liquid::ParserBuilder::with_stdlib().build().unwrap();
     let preamble_template = liquid_parser.parse(PREAMBLE_TEMPLATE).unwrap();
     let postamble_template = liquid_parser.parse(POSTAMBLE_TEMPLATE).unwrap();
+    let message_group_template = liquid_parser.parse(MESSAGE_GROUP_TEMPLATE).unwrap();
 
     let category_name = match channel.category_id {
         Some(x) => x.name(&ctx).await,
@@ -84,63 +86,33 @@ pub async fn write_html<P: AsRef<Path>>(
     trace!("Begin saving messages");
     for (i, message) in messages.iter().enumerate() {
         let author = &message.author;
-        let author_nick_or_user = message_renderer
-            .get_name_used(&message.author)
-            .await
-            .to_owned();
+
         let author_highest_role = message_renderer
             .get_highest_role(&message.author, guild)
             .await;
 
-        let message_timestamp = format!(
-            r#"<span class="chatlog__timestamp">{}</span>"#,
-            message.timestamp
-        );
-
-        let author_name_container = format!(
-            r#"<span class="chatlog__author-name" title="{}#{:04}" data-user-id="{}" style="color: rgb({}, {}, {})">
-    {}
-</span>"#,
-            author.name,
-            author.discriminator,
-            author.id.0,
-            author_highest_role.map(|x| x.colour.r()).unwrap_or(255),
-            author_highest_role.map(|x| x.colour.g()).unwrap_or(255),
-            author_highest_role.map(|x| x.colour.b()).unwrap_or(255),
-            author_nick_or_user,
-        );
-
         let content = message_renderer.render_message(&message).await;
 
-        let message_group = format!(
-            r#"<div class="chatlog__message-group">
-    <div class="chatlog__author-avatar-container">
-        <img class="chatlog__author-avatar" src="{}" alt="Avatar" title="Avatar" />
-    </div>
-    <div class="chatlog__messages">
-        {}
-        {}
+        let message_liquid_objects = liquid::object!({
+            "author_avatar_url": author.face(),
+            "author_username": author.name,
+            "author_discriminator": format!("{:04}", author.discriminator),
+            "author_user_id": author.id.0,
+            "author_name_colour": format!(
+                "rgb({}, {}, {})",
+                author_highest_role.map(|x| x.colour.r()).unwrap_or(255),
+                author_highest_role.map(|x| x.colour.g()).unwrap_or(255),
+                author_highest_role.map(|x| x.colour.b()).unwrap_or(255),
+                ),
+            "author_nick": message_renderer.get_nickname(&message.author).await.unwrap_or(""),
+            "message_timestamp": message.timestamp,
+            "message_content": content,
+            "message_id": message.id.0,
+        });
 
-        <div
-          class="chatlog__message"
-          data-message-id="{}"
-          id="message-{}"
-        >
-            <div class="chatlog__content">
-                <div class="markdown">
-                    {}
-                </div>
-            </div>
-        </div>
-    </div>
-</div>"#,
-            author.face(),
-            author_name_container,
-            message_timestamp,
-            message.id.to_string(),
-            message.id.to_string(),
-            content,
-        );
+        let message_group = message_group_template
+            .render(&message_liquid_objects)
+            .unwrap();
         html.push_str(&message_group);
         trace!("Archived message {} / {}", i + 1, messages.len());
     }
@@ -154,15 +126,6 @@ pub async fn write_html<P: AsRef<Path>>(
         postamble_template
             .render(&postamble_liquid_objects)?
             .as_str(),
-    );
-
-    let html = html.replace(
-        "EXPORTED_MESSAGES_NUMBER",
-        &format!(
-            "Exported {} message{}",
-            messages.len(),
-            if messages.len() == 1 { "" } else { "s" }
-        ),
     );
 
     trace!("Writing html file {:?}", path.as_ref());
@@ -518,15 +481,10 @@ impl<'context> MessageRenderer<'context> {
         content.into()
     }
 
-    async fn get_name_used<'a>(&'a mut self, user: &'a User) -> &'a str {
-        match self
-            .get_member_cached(&user.id)
+    async fn get_nickname(&mut self, user: &User) -> Option<&str> {
+        self.get_member_cached(&user.id)
             .await
-            .and_then(|ref x| x.nick.as_ref())
-        {
-            Some(x) => x.as_str(),
-            None => user.name.as_str(),
-        }
+            .and_then(|ref x| x.nick.as_deref())
     }
 
     async fn get_highest_role(

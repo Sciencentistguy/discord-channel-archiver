@@ -1,0 +1,26 @@
+<div class="chatlog__message-group">
+  <div class="chatlog__author-avatar-container">
+      <img class="chatlog__author-avatar" src="{{author_avatar_url}}" alt="Avatar" title="Avatar" />
+  </div>
+  <div class="chatlog__messages">
+      <span class="chatlog__author-name" title="{{author_username}}#{{author_discriminator}}" data-user-id="{{author_user_id}}" style="color: {{author_name_colour}}">
+        {% if author_nick == "" %}
+          {{author_username}}
+        {% else %}
+          {{author_nick}}
+        {% endif %}
+      </span>
+      <span class="chatlog__timestamp">{{message_timestamp}}</span>
+      <div
+        class="chatlog__message"
+        data-message-id="{{message_id}}"
+        id="message-{{message_id}}"
+      >
+        <div class="chatlog__content">
+          <div class="markdown">
+            {{message_content}}
+          </div>
+        </div>
+      </div>
+    </div>
+</div>
