@@ -6,6 +6,7 @@ mod json;
 use std::env;
 use std::io;
 use std::io::Write;
+use std::path::PathBuf;
 use std::str::FromStr;
 
 use eyre::Context as EyreContext;
@@ -115,8 +116,14 @@ async fn archive(
         messages.len(),
         (end - start).as_secs_f64()
     );
-
-    let output_filename = format!("{}/{}-{}", OPTIONS.output_path, guild.name, channel.name);
+    let output_path = OPTIONS.output_path.to_string_lossy();
+    let output_filename = format!(
+        "{}{}{}-{}",
+        output_path,
+        if output_path.ends_with('/') { "" } else { "/" },
+        guild.name,
+        channel.name
+    );
 
     let mut created_files: Vec<String> = Vec::new();
     if modes.json {
@@ -305,5 +312,5 @@ struct Opt {
     token_filename: Option<String>,
     /// The path to output files to
     #[structopt(default_value = "/dev/shm/")]
-    output_path: String,
+    output_path: PathBuf,
 }

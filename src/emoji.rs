@@ -1,6 +1,5 @@
-use std::path::PathBuf;
-
 use crate::file;
+use crate::OPTIONS;
 
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
@@ -20,8 +19,7 @@ pub async fn archive_emoji(ctx: &Context, msg: &Message) {
         }
     };
     info!("Starting emoji archive");
-    let mut output_directory = PathBuf::from(&crate::OPTIONS.output_path);
-    output_directory.push(format!(
+    let output_directory = OPTIONS.output_path.join(format!(
         "{}-{}",
         guild.name.replace(' ', "-").to_lowercase(),
         chrono::Utc::now().format("%Y-%m-%dT%H-%M-%S")
