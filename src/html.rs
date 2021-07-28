@@ -31,7 +31,6 @@ const USE_DARK_MODE: bool = true;
 
 static CUSTOM_EMOJI_REGEX: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(\\?)&lt;(a?):(\w+):(\d+)&gt;").unwrap());
-static CODE_BLOCK_LANGUAGE_TAG_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"^\w*<br>").unwrap());
 static BOLD_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"\*\*([^\*]+)\*\*").unwrap());
 static UNDERLINE_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"__([^_]+)__").unwrap());
 static ITALICS_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"\*([^\*]+)\*").unwrap());
@@ -250,15 +249,37 @@ impl<'context> MessageRenderer<'context> {
 
             let mut urls = Vec::new();
 
-            let split = content.split("```");
-            for (c, block) in split.enumerate() {
-                if c & 1 == 0 {
+            for (c, block) in content.split("```").enumerate() {
+                if c & 1 == 1 {
+                    // TODO syntax highlighting
+                    trace!("Found multiline code block '{}' in '{}'", block, content);
+                    out.push_str(r#"<pre class="pre pre--multiline">"#);
+                    let b = block.find("<br>").and_then(|idx| {
+                        if block[..idx].chars().all(|c| c.is_ascii()) {
+                            block.get(idx + 4..)
+                        } else {
+                            None
+                        }
+                    });
+                    match b {
+                        Some(b) => out.push_str(b),
+                        None => out.push_str(block),
+                    }
+                    out.push_str(r#"</pre>"#);
+                } else {
                     // Inline code blocks
+                    // FIXME this is wrong. it recognises "test `message" and "test `message`" the
+                    // same way
                     let block = {
                         let mut out = String::with_capacity(8000 * std::mem::size_of::<char>());
                         let split = block.split('`');
                         for (c, block) in split.enumerate() {
-                            if c & 1 == 0 {
+                            if c & 1 == 1 {
+                                trace!("Found inline code block '{}' in '{}'", block, content);
+                                out.push_str(r#"<code class="pre pre--inline">"#);
+                                out.push_str(block);
+                                out.push_str("</code>");
+                            } else {
                                 let mut block = block.to_string();
 
                                 // URLs
@@ -428,22 +449,12 @@ impl<'context> MessageRenderer<'context> {
                                 }
 
                                 out.push_str(block.as_str());
-                            } else {
-                                trace!("Found inline code block '{}' in '{}'", block, content);
-                                out.push_str(r#"<code class="pre pre--inline">"#);
-                                out.push_str(block);
-                                out.push_str("</code>");
                             }
                         }
                         out
                     };
 
                     out.push_str(block.as_str());
-                } else {
-                    trace!("Found multiline code block '{}' in '{}'", block, content);
-                    out.push_str(r#"<pre class="pre pre--multiline">"#);
-                    out.push_str(CODE_BLOCK_LANGUAGE_TAG_REGEX.replace(block, "").as_ref()); // TODO syntax highlighting with this
-                    out.push_str(r#"</pre>"#);
                 }
             }
             out
@@ -519,15 +530,5 @@ fn get_member_nick(member: &Member) -> &str {
 }
 
 fn get_acronym_from_str(string: &str) -> String {
-    let mut out = String::with_capacity(string.chars().filter(|&x| x == ' ').count() * 2);
-    for word in string.split(' ') {
-        out.push(match word.chars().next() {
-            Some(x) => x,
-            None => {
-                break;
-            }
-        })
-    }
-
-    out
+    string.split(' ').filter_map(|x| x.chars().next()).collect()
 }
