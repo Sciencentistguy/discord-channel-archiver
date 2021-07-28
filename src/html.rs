@@ -203,17 +203,18 @@ impl<'context> MessageRenderer<'context> {
     }
 
     async fn get_member_cached(&mut self, user_id: &UserId) -> Option<&Member> {
-        if let Some(m) = self.members.get(user_id) {
-            // It is more obvious that this is safe with a match
-            #[allow(clippy::manual_map)]
-            match m {
-                // SAFETY: These two borrows *are* mutually exclusive, and therefore tricking the
-                // borrow checker here is fine.
-                Some(x) => Some(unsafe { &*(x as *const _) }),
-                None => None,
+        match self.members.get(user_id) {
+            Some(member) => {
+                // It is more obvious that this is safe with a match
+                #[allow(clippy::manual_map)]
+                match member {
+                    // SAFETY: These two borrows *are* mutually exclusive, and therefore tricking the
+                    // borrow checker here is fine.
+                    Some(x) => Some(unsafe { &*(x as *const _) }),
+                    None => None,
+                }
             }
-        } else {
-            match self.guild.member(&self.ctx, user_id).await {
+            None => match self.guild.member(&self.ctx, user_id).await {
                 Ok(x) => {
                     self.members.insert(*user_id, Some(x));
                     self.members.get(&user_id).and_then(Option::as_ref)
@@ -223,7 +224,7 @@ impl<'context> MessageRenderer<'context> {
                     self.members.insert(*user_id, None);
                     None
                 }
-            }
+            },
         }
     }
 
@@ -241,6 +242,8 @@ impl<'context> MessageRenderer<'context> {
         // HTML doesn't respect newlines, it needs <br>
         let content = content.replace('\n', "<br>");
 
+        println!("content: {}", content);
+
         // Multiline code blocks
         let mut content = {
             // Maximum length of a discord message is 2000 characters. It is therefore unlikely that
@@ -249,214 +252,226 @@ impl<'context> MessageRenderer<'context> {
 
             let mut urls = Vec::new();
 
-            for (c, block) in content.split("```").enumerate() {
-                if c & 1 == 1 {
-                    // TODO syntax highlighting
-                    trace!("Found multiline code block '{}' in '{}'", block, content);
+            let code_block_strs = content.split("```").collect::<Vec<_>>();
+
+            let no_code_block = code_block_strs.len() <= 2;
+
+            for (c, whole_block) in code_block_strs.into_iter().enumerate() {
+                let whole_block = if no_code_block {
+                    strip_html_newlines(content.as_str())
+                } else {
+                    strip_html_newlines(whole_block)
+                };
+                if no_code_block || c & 1 == 0 {
+                    // Not in a code block
+                    if whole_block.is_empty() {
+                        continue;
+                    }
+                    println!("will render as normal text: '{}'", whole_block);
+                    // Inline code blocks
+                    let code_block_strs = whole_block.split('`').collect::<Vec<_>>();
+                    let no_code_block = code_block_strs.len() <= 2;
+                    for (c, block) in code_block_strs.into_iter().enumerate() {
+                        let block = if no_code_block {
+                            strip_html_newlines(whole_block)
+                        } else {
+                            strip_html_newlines(block)
+                        };
+                        if no_code_block || c & 1 == 0 {
+                            // Not in a code block
+                            if block.is_empty() {
+                                continue;
+                            }
+                            let mut block = block.to_string();
+
+                            // URLs
+                            while let Some(m) = URL_REGEX.find(block.as_str()) {
+                                trace!("Found URL '{}' in '{}'", m.as_str(), content);
+                                if m.as_str() == content
+                                    && IMAGE_FILE_EXTS.iter().any(|x| m.as_str().ends_with(x))
+                                {
+                                    trace!("Found image embed '{}'.", m.as_str());
+                                    return format!(
+                                        r#"<span class="chatlog__embed-image-container">
+            <a href="{0:}" target="_blank">
+            <img class="chatlog__embed-image" title="{0:}", src="{0:}" alt="{0:}"/>
+            </a>
+            </span><br>"#,
+                                        m.as_str()
+                                    );
+                                }
+                                let s = strip_html_newlines(m.as_str());
+                                urls.push(s.to_owned());
+                                block = block.replace(s, "!!URL!!");
+                            }
+
+                            // Bold (double asterisk)
+                            let block =
+                                BOLD_REGEX.replace_all(&block, |capts: &regex::Captures| {
+                                    trace!("Found bold block in '{}'", block);
+                                    format!("<b>{}</b>", &capts[1])
+                                });
+
+                            // Underline (double underscore)
+                            let block =
+                                UNDERLINE_REGEX.replace_all(&block, |capts: &regex::Captures| {
+                                    trace!("Found underline block in '{}'", block);
+                                    format!("<u>{}</u>", &capts[1])
+                                });
+
+                            // Italics (single asterisk)
+                            let block =
+                                ITALICS_REGEX.replace_all(&block, |capts: &regex::Captures| {
+                                    trace!("Found italics block in '{}'", block);
+                                    format!("<i>{}</i>", &capts[1])
+                                });
+
+                            // Italics (single underscore)
+                            let block =
+                                ITALICS_REGEX2.replace_all(&block, |capts: &regex::Captures| {
+                                    trace!("Found italics 2 block in '{}'", block);
+                                    format!("<i>{}</i>", &capts[1])
+                                });
+
+                            // Strikethrough (double tilde)
+                            let block = STRIKETHROUGH_REGEX.replace_all(
+                                &block,
+                                |capts: &regex::Captures| {
+                                    trace!("Found strikethrough block in '{}'", block);
+                                    format!("<s>{}</s>", &capts[1])
+                                },
+                            );
+
+                            // Custom (non-unicode) emoji
+                            let block = CUSTOM_EMOJI_REGEX.replace_all(
+                                &block,
+                                |capts: &regex::Captures| {
+                                    if &capts[1] == r"\" {
+                                        return capts[0][1..capts[0].len()].replace(":", "&#58;");
+                                    }
+                                    let animated = &capts[2] == "a";
+                                    let name = &capts[3];
+                                    let id = &capts[4];
+                                    trace!("Found custom emoji '{}' in '{}'", name, block);
+                                    let url = match animated {
+                                        true => {
+                                            format!("https://cdn.discordapp.com/emojis/{}.gif", id)
+                                        }
+                                        false => {
+                                            format!("https://cdn.discordapp.com/emojis/{}.png", id)
+                                        }
+                                    };
+                                    format!(
+                                        r#"<img
+  class="emoji"
+  src="{0:}"
+  alt="{1:}"
+  title="{1:}"
+    />"#,
+                                        url, &capts[1]
+                                    )
+                                },
+                            );
+                            // Channel mentions
+                            let block = CHANNEL_MENTION_REGEX.replace_all(
+                                &block,
+                                |capts: &regex::Captures| {
+                                    trace!("Found channel mention '{}' in '{}'", &capts[0], &block);
+                                    let cid: u64 = capts[1].parse().unwrap();
+                                    let name = self.channel_names.get(&cid);
+                                    match name {
+                                        Some(x) => {
+                                            format!("<span class=mention>#{}</span>", x)
+                                        }
+                                        None => {
+                                            warn!("Channel mentioned that does not exist");
+                                            format!("<span class=mention>#{}</span>", cid)
+                                        }
+                                    }
+                                },
+                            );
+
+                            // Quote blocks
+                            let block =
+                                QUOTE_REGEX.replace_all(&block, |capts: &regex::Captures| {
+                                    trace!("Found quote block '{}' in '{}'", &capts[0], &block);
+                                    let s = capts[1][4..].replace("<br>&gt;", "<br>");
+                                    format!("<div class=quote>{}</div>", s)
+                                });
+
+                            let mut block: String = block.into();
+
+                            // User mentions
+                            while let Some(m) = USER_MENTION_REGEX.find(&block) {
+                                trace!("Found user mention '{}' in '{}'", m.as_str(), &block);
+                                let uid: serenity::model::id::UserId = block
+                                    [m.start() + 6..m.end() - 4]
+                                    .parse::<u64>()
+                                    .unwrap()
+                                    .into();
+                                let member = self.get_member_cached(&uid).await;
+                                block = match member {
+                                    Some(x) => block.replace(
+                                        m.as_str(),
+                                        &format!(
+                                            "<span class=mention>@{}</span>",
+                                            get_member_nick(x)
+                                        ),
+                                    ),
+                                    None => {
+                                        let name = self.get_username_cached(&uid).await;
+                                        block.replace(
+                                            m.as_str(),
+                                            &match name {
+                                                Some(name) => {
+                                                    format!("<span class=mention>@{}</span>", name)
+                                                }
+                                                None => {
+                                                    format!("<span class=mention>@{}</span>", uid)
+                                                }
+                                            },
+                                        )
+                                    }
+                                }
+                            }
+
+                            // URLs part 2
+                            for url in urls.iter() {
+                                block = block.replacen(
+                                    "!!URL!!",
+                                    format!(r#"<a href="{0}">{0}</a>"#, url).as_str(),
+                                    1,
+                                );
+                            }
+
+                            out.push_str(block.as_str());
+                        } else {
+                            // Inline code block
+                            trace!("Found inline code block '{}' in '{}'", block, content);
+                            out.push_str(r#"<code class="pre pre--inline">"#);
+                            out.push_str(block);
+                            out.push_str("</code>");
+                        }
+                    }
+                } else {
+                    // in code block
+                    println!("will render as code block: '{}'", whole_block);
                     out.push_str(r#"<pre class="pre pre--multiline">"#);
-                    let b = block.find("<br>").and_then(|idx| {
-                        if block[..idx].chars().all(|c| c.is_ascii()) {
-                            block.get(idx + 4..)
+                    let b = whole_block.find("<br>").and_then(|idx| {
+                        if whole_block[..idx].chars().all(|c| c.is_ascii()) {
+                            whole_block.get(idx + 4..)
                         } else {
                             None
                         }
                     });
                     match b {
                         Some(b) => out.push_str(b),
-                        None => out.push_str(block),
+                        None => out.push_str(whole_block),
                     }
                     out.push_str(r#"</pre>"#);
-                } else {
-                    // Inline code blocks
-                    // FIXME this is wrong. it recognises "test `message" and "test `message`" the
-                    // same way
-                    let block = {
-                        let mut out = String::with_capacity(8000 * std::mem::size_of::<char>());
-                        let split = block.split('`');
-                        for (c, block) in split.enumerate() {
-                            if c & 1 == 1 {
-                                trace!("Found inline code block '{}' in '{}'", block, content);
-                                out.push_str(r#"<code class="pre pre--inline">"#);
-                                out.push_str(block);
-                                out.push_str("</code>");
-                            } else {
-                                let mut block = block.to_string();
-
-                                // URLs
-                                while let Some(m) = URL_REGEX.find(block.as_str()) {
-                                    trace!("Found URL '{}' in '{}'", m.as_str(), content);
-                                    if m.as_str() == content
-                                        && IMAGE_FILE_EXTS.iter().any(|x| m.as_str().ends_with(x))
-                                    {
-                                        trace!("Found image embed '{}'.", m.as_str());
-                                        return format!(
-                                            r#"<span class="chatlog__embed-image-container">
-    <a href="{0:}" target="_blank">
-        <img class="chatlog__embed-image" title="{0:}", src="{0:}" alt="{0:}"/>
-    </a>
-</span><br>"#,
-                                            m.as_str()
-                                        );
-                                    }
-                                    let s = if let Some(idx) = m.as_str().find("<br>") {
-                                        &m.as_str()[..idx]
-                                    } else {
-                                        m.as_str()
-                                    };
-                                    urls.push(s.to_owned());
-                                    block = block.replace(s, "!!URL!!");
-                                }
-
-                                // Bold (double asterisk)
-                                let block =
-                                    BOLD_REGEX.replace_all(&block, |capts: &regex::Captures| {
-                                        trace!("Found bold block in '{}'", block);
-                                        format!("<b>{}</b>", &capts[1])
-                                    });
-
-                                // Underline (double underscore)
-                                let block = UNDERLINE_REGEX.replace_all(
-                                    &block,
-                                    |capts: &regex::Captures| {
-                                        trace!("Found underline block in '{}'", block);
-                                        format!("<u>{}</u>", &capts[1])
-                                    },
-                                );
-
-                                // Italics (single asterisk)
-                                let block =
-                                    ITALICS_REGEX.replace_all(&block, |capts: &regex::Captures| {
-                                        trace!("Found italics block in '{}'", block);
-                                        format!("<i>{}</i>", &capts[1])
-                                    });
-
-                                // Italics (single underscore)
-                                let block = ITALICS_REGEX2.replace_all(
-                                    &block,
-                                    |capts: &regex::Captures| {
-                                        trace!("Found italics 2 block in '{}'", block);
-                                        format!("<i>{}</i>", &capts[1])
-                                    },
-                                );
-
-                                // Strikethrough (double tilde)
-                                let block = STRIKETHROUGH_REGEX.replace_all(
-                                    &block,
-                                    |capts: &regex::Captures| {
-                                        trace!("Found strikethrough block in '{}'", block);
-                                        format!("<s>{}</s>", &capts[1])
-                                    },
-                                );
-
-                                // Custom (non-unicode) emoji
-                                let block = CUSTOM_EMOJI_REGEX.replace_all(&block, |capts: &regex::Captures| {
-                                    if &capts[1] == r"\" {
-                                        return capts[0][1..capts[0].len()].replace(":", "&#58;");
-                                    }
-
-                                    let animated = &capts[2] == "a";
-                                    let name = &capts[3];
-                                    let id = &capts[4];
-
-                                    trace!("Found custom emoji '{}' in '{}'", name, block);
-                                    let url = match animated {
-                                        true => format!("https://cdn.discordapp.com/emojis/{}.gif", id),
-                                        false => format!("https://cdn.discordapp.com/emojis/{}.png", id),
-                                    };
-
-                                    format!(
-                                        r#"<img class="emoji" src="{0:}" alt="{1:}" title="{1:}"/>"#,
-                                        url, &capts[1]
-                                    )
-                                });
-
-                                // Channel mentions
-                                let block = CHANNEL_MENTION_REGEX.replace_all(
-                                    &block,
-                                    |capts: &regex::Captures| {
-                                        trace!(
-                                            "Found channel mention '{}' in '{}'",
-                                            &capts[0],
-                                            &block
-                                        );
-                                        let cid: u64 = capts[1].parse().unwrap();
-                                        let name = self.channel_names.get(&cid);
-                                        match name {
-                                            Some(x) => format!("<span class=mention>#{}</span>", x),
-                                            None => {
-                                                warn!("Channel mentioned that does not exist");
-                                                format!("<span class=mention>#{}</span>", cid)
-                                            }
-                                        }
-                                    },
-                                );
-
-                                // Quote blocks
-                                let block =
-                                    QUOTE_REGEX.replace_all(&block, |capts: &regex::Captures| {
-                                        trace!("Found quote block '{}' in '{}'", &capts[0], &block);
-                                        let s = capts[1][4..].replace("<br>&gt;", "<br>");
-                                        format!("<div class=quote>{}</div>", s)
-                                    });
-
-                                let mut block: String = block.into();
-
-                                // User mentions
-                                while let Some(m) = USER_MENTION_REGEX.find(&block) {
-                                    trace!("Found user mention '{}' in '{}'", m.as_str(), &block);
-                                    let uid: serenity::model::id::UserId = block
-                                        [m.start() + 6..m.end() - 4]
-                                        .parse::<u64>()
-                                        .unwrap()
-                                        .into();
-                                    let member = self.get_member_cached(&uid).await;
-                                    block = match member {
-                                        Some(x) => block.replace(
-                                            m.as_str(),
-                                            &format!(
-                                                "<span class=mention>@{}</span>",
-                                                get_member_nick(x)
-                                            ),
-                                        ),
-                                        None => {
-                                            let name = self.get_username_cached(&uid).await;
-                                            block.replace(
-                                                m.as_str(),
-                                                &match name {
-                                                    Some(name) => {
-                                                        format!(
-                                                            "<span class=mention>@{}</span>",
-                                                            name
-                                                        )
-                                                    }
-                                                    None => format!(
-                                                        "<span class=mention>@{}</span>",
-                                                        uid
-                                                    ),
-                                                },
-                                            )
-                                        }
-                                    }
-                                }
-
-                                // URLs part 2
-                                for url in urls.iter() {
-                                    block = block.replacen(
-                                        "!!URL!!",
-                                        format!(r#"<a href="{0}">{0}</a>"#, url).as_str(),
-                                        1,
-                                    );
-                                }
-
-                                out.push_str(block.as_str());
-                            }
-                        }
-                        out
-                    };
-
-                    out.push_str(block.as_str());
                 }
             }
+
             out
         };
 
@@ -531,4 +546,11 @@ fn get_member_nick(member: &Member) -> &str {
 
 fn get_acronym_from_str(string: &str) -> String {
     string.split(' ').filter_map(|x| x.chars().next()).collect()
+}
+
+fn strip_html_newlines(string: &str) -> &str {
+    const HTML_NEWLINE: &str = "<br>";
+    string
+        .trim_start_matches(HTML_NEWLINE)
+        .trim_end_matches(HTML_NEWLINE)
 }
