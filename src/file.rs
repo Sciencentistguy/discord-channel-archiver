@@ -1,13 +1,12 @@
+use crate::Result;
+
 use std::fs::File;
 use std::io;
 use std::path::Path;
 
 use log::*;
 
-pub async fn download_url<P>(
-    url: String,
-    destination_filename: P,
-) -> Result<(), Box<dyn std::error::Error>>
+pub async fn download_url<P>(url: String, destination_filename: P) -> Result<()>
 where
     P: AsRef<Path>,
 {

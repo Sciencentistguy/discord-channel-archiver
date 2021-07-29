@@ -1,5 +1,6 @@
 use crate::file;
 use crate::OPTIONS;
+use crate::REPLY_FAILURE;
 
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
@@ -13,7 +14,7 @@ pub async fn archive_emoji(ctx: &Context, msg: &Message) {
         None => {
             msg.reply(&ctx, "This bot must be used in a guild channel.")
                 .await
-                .expect("Failed to reply to message.");
+                .expect(REPLY_FAILURE);
             error!("This bot must be used in a guild channel.");
             return;
         }
@@ -53,5 +54,5 @@ pub async fn archive_emoji(ctx: &Context, msg: &Message) {
         ),
     )
     .await
-    .expect("Failed to reply to message");
+    .expect(REPLY_FAILURE);
 }

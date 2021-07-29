@@ -1,16 +1,13 @@
 mod emoji;
+mod error;
 mod file;
 mod html;
 mod json;
 
 use std::env;
-use std::io;
-use std::io::Write;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use eyre::Context as EyreContext;
-use eyre::Result;
 use log::*;
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -23,9 +20,14 @@ use serenity::model::id::ChannelId;
 use serenity::prelude::*;
 use structopt::StructOpt;
 
-const USAGE_STRING: &str = r#"Invalid syntax.
-Correct usage is `!archive <channel> [mode(s)]`, where `<channel>` is the channel you want to archive, and `[mode(s)]` is a possibly comma-separated list of modes.
-Valid modes are: `json,html`. All modes are enabled if this parameter is omitted."#;
+type Result<T> = std::result::Result<T, error::Error>;
+
+const USAGE_STRING: &str = "Invalid syntax.\n Correct usage is `!archive <channel> [mode(s)]`,\
+                            where `<channel>` is the channel you want to archive, and `[mode(s)]`\
+                            is a possibly comma-separated list of modes.\nValid modes are:\
+                            `json,html`. All modes are enabled if this parameter is omitted.";
+
+const REPLY_FAILURE: &str = "Failed to reply to message";
 
 static COMMAND_REGEX: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^!archive +<#(\d+)> *([\w,]+)?$").unwrap());
@@ -81,6 +83,7 @@ async fn archive(
     let start = std::time::Instant::now();
     let messages = {
         let mut messages = channel.messages(&ctx, |r| r.limit(100)).await?;
+        trace!("Downloaded {} messages...", messages.len());
         let mut x = 100;
         while x == 100 {
             let last_msg = messages.last().unwrap();
@@ -92,27 +95,24 @@ async fn archive(
                 Ok(x) => x,
                 Err(e) => {
                     warn!(
-                        "Discord returned an error '{}'. Waiting 5 seconds before retrying",
+                        "While trying to download messages, \
+                        Discord returned an error '{}'. Waiting 5 seconds before retrying",
                         e
                     );
-                    tokio::time::sleep(std::time::Duration::from_millis(5000)).await;
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                     continue;
                 }
             };
             x = new_msgs.len();
             messages.extend(new_msgs.into_iter());
-            trace!(
-                "Downloaded {} more messages, for a total of {} so far",
-                x,
-                messages.len()
-            );
+            trace!("Downloaded {} messages...", messages.len());
         }
         messages.reverse();
         messages
     };
     let end = std::time::Instant::now();
-    trace!(
-        "{} messages downloaded. Took {:.2}s",
+    info!(
+        "Downloaded {} messages. Took {:.2}s",
         messages.len(),
         (end - start).as_secs_f64()
     );
@@ -128,23 +128,13 @@ async fn archive(
     let mut created_files: Vec<String> = Vec::new();
     if modes.json {
         let filename = format!("{}.json", output_filename);
-        while let Err(x) = json::write_json(&ctx, &guild, &messages, &filename).await {
-            error!("Failed to write json: {}", x);
-            if !confirm("Retry?", true)? {
-                break;
-            }
-        }
+        json::write_json(&ctx, &guild, &messages, &filename).await?;
         created_files.push(filename);
     }
 
     if modes.html {
         let filename = format!("{}.html", output_filename);
-        while let Err(x) = html::write_html(&ctx, &guild, &channel, &messages, &filename).await {
-            error!("Failed to write html: {}", x);
-            if !confirm("Retry?", true)? {
-                break;
-            }
-        }
+        html::write_html(&ctx, &guild, &channel, &messages, &filename).await?;
         created_files.push(filename);
     }
 
@@ -168,13 +158,6 @@ impl std::fmt::Display for ArchivalMode {
 
 #[async_trait]
 impl EventHandler for Handler {
-    //async fn cache_ready(&self, ctx: Context, guilds: Vec<serenity::model::id::GuildId>) {
-    //for g in guilds {
-    //println!("guild: {:#?}", ctx.cache.guild(g).await);
-    //}
-    ////println!("ctx.cache: {:#?}, guilds: {:#?}", ctx.cache.guilds().await, guilds);
-    //}
-
     async fn message(&self, ctx: Context, msg: Message) {
         if msg.content.starts_with("!archive") {
             if msg.content.starts_with("!archive_emoji") {
@@ -182,9 +165,7 @@ impl EventHandler for Handler {
             } else {
                 let capts = COMMAND_REGEX.captures(&msg.content);
                 if capts.as_ref().and_then(|x| x.get(0)).is_none() {
-                    msg.reply(&ctx, USAGE_STRING)
-                        .await
-                        .expect("Failed to reply to message.");
+                    msg.reply(&ctx, USAGE_STRING).await.expect(REPLY_FAILURE);
                     info!("Invalid archive command supplied: '{}'", &msg.content);
                     return;
                 }
@@ -210,7 +191,7 @@ impl EventHandler for Handler {
                     Err(_) => {
                         msg.reply(&ctx, format!("Invalid channel id {}.", channel_id_str))
                             .await
-                            .expect("Failed to reply to message");
+                            .expect(REPLY_FAILURE);
                         return;
                     }
                 }
@@ -225,7 +206,7 @@ impl EventHandler for Handler {
                     None => {
                         msg.reply(&ctx, "This bot must be used in a guild channel.")
                             .await
-                            .expect("Failed to reply to message.");
+                            .expect(REPLY_FAILURE);
                         error!("This bot must be used in a guild channel.");
                         return;
                     }
@@ -240,14 +221,13 @@ impl EventHandler for Handler {
                     modes
                 );
 
-                let created_files = archive(&ctx, &channel, &guild, modes)
-                    .await
-                    .wrap_err(format!("Failed to archive channel '{}'", channel));
-
-                let created_files = match created_files {
+                let created_files = match archive(&ctx, &channel, &guild, modes).await {
                     Ok(x) => x,
                     Err(e) => {
                         error!("{}", e);
+                        msg.reply(&ctx, format!("Error!\n```\n{}\n```", e))
+                            .await
+                            .expect(REPLY_FAILURE);
                         return;
                     }
                 };
@@ -260,7 +240,7 @@ impl EventHandler for Handler {
                     ),
                 )
                 .await
-                .expect("Failed to reply to message.");
+                .expect(REPLY_FAILURE);
             }
         }
     }
@@ -271,30 +251,6 @@ impl EventHandler for Handler {
             ready.user.name,
             ready.guilds.len()
         );
-    }
-}
-
-pub fn confirm(prompt: &str, default: bool) -> Result<bool> {
-    let mut buf = String::new();
-    loop {
-        if default {
-            print!("{} (Y/n) ", prompt);
-        } else {
-            print!("{} (y/N) ", prompt);
-        }
-
-        io::stdout().lock().flush()?;
-        io::stdin()
-            .read_line(&mut buf)
-            .wrap_err("Failed to read response from stdin")?;
-        buf.make_ascii_lowercase();
-
-        match &*(buf.trim_end()) {
-            "y" | "yes" => return Ok(true),
-            "n" | "no" => return Ok(false),
-            "" => return Ok(default),
-            _ => println!("Invalid response."),
-        }
     }
 }
 

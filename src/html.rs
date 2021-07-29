@@ -1,12 +1,12 @@
-use log::*;
+use crate::Result;
 
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-use eyre::Context as EyreContext;
-use eyre::Result;
+use log::*;
 use once_cell::sync::Lazy;
+use regex::Regex;
 use serenity::model::channel::GuildChannel;
 use serenity::model::channel::Message;
 use serenity::model::guild::Guild;
@@ -16,8 +16,6 @@ use serenity::model::id::ChannelId;
 use serenity::model::id::UserId;
 use serenity::model::user::User;
 use serenity::prelude::Context;
-
-use regex::Regex;
 
 const CORE_THEME_CSS: &str = include_str!("html_templates/core.css");
 const DARK_THEME_CSS: &str = include_str!("html_templates/dark.css");
@@ -50,7 +48,7 @@ pub async fn write_html<P: AsRef<Path>>(
     channel: &GuildChannel,
     messages: &[Message],
     path: P,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<()> {
     trace!("Entered HTML generator.");
 
     let liquid_parser = liquid::ParserBuilder::with_stdlib().build().unwrap();
@@ -128,7 +126,7 @@ pub async fn write_html<P: AsRef<Path>>(
     );
 
     trace!("Writing html file {:?}", path.as_ref());
-    fs::write(path, html).wrap_err("Failed to write file to filesystem")?;
+    fs::write(path, html)?;
 
     info!("HTML generation complete.");
 

@@ -1,8 +1,8 @@
+use crate::Result;
+
 use std::fs;
 use std::path::Path;
 
-use eyre::Context as EyreContext;
-use eyre::Result;
 use log::*;
 use serde::Deserialize;
 use serde::Serialize;
@@ -129,8 +129,8 @@ pub async fn write_json<P: AsRef<Path>>(
         "channel" : channel_json,
         "messages" : message_jsons
     });
-    let file = fs::File::create(path).wrap_err("Failed to created file")?;
-    serde_json::to_writer_pretty(file, &json).wrap_err("Failed to serialise json")?;
+    let file = fs::File::create(path)?;
+    serde_json::to_writer_pretty(file, &json)?;
     info!("JSON generation complete.");
     Ok(())
 }
