@@ -90,8 +90,6 @@ pub async fn write_html<P: AsRef<Path>>(
 
         let content = message_renderer.render_message(&message).await;
 
-        println!("{:?}", author_highest_role);
-
         let message_liquid_objects = liquid::object!({
             "author_avatar_url": author.face(),
             "author_username": author.name,
@@ -240,8 +238,6 @@ impl<'context> MessageRenderer<'context> {
         // HTML doesn't respect newlines, it needs <br>
         let content = content.replace('\n', "<br>");
 
-        println!("content: {}", content);
-
         // Multiline code blocks
         let mut content = {
             // Maximum length of a discord message is 2000 characters. It is therefore unlikely that
@@ -265,7 +261,6 @@ impl<'context> MessageRenderer<'context> {
                     if whole_block.is_empty() {
                         continue;
                     }
-                    println!("will render as normal text: '{}'", whole_block);
                     // Inline code blocks
                     let code_block_strs = whole_block.split('`').collect::<Vec<_>>();
                     let no_code_block = code_block_strs.len() <= 2;
@@ -453,7 +448,6 @@ impl<'context> MessageRenderer<'context> {
                     }
                 } else {
                     // in code block
-                    println!("will render as code block: '{}'", whole_block);
                     out.push_str(r#"<pre class="pre pre--multiline">"#);
                     let b = whole_block.find("<br>").and_then(|idx| {
                         if whole_block[..idx].chars().all(|c| c.is_ascii()) {

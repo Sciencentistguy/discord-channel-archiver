@@ -52,7 +52,7 @@ async fn main() {
         return;
     };
 
-    println!("Token: {}", token);
+    trace!("Token: {}", token);
 
     // Create a new instance of the Client, logging in as a bot. This will
     // automatically prepend your bot token with "Bot ", which is a requirement
@@ -121,8 +121,8 @@ async fn archive(
         "{}{}{}-{}",
         output_path,
         if output_path.ends_with('/') { "" } else { "/" },
-        guild.name,
-        channel.name
+        guild.name.replace(char::is_whitespace, "_"),
+        channel.name.replace(char::is_whitespace, "_"),
     );
 
     let mut created_files: Vec<String> = Vec::new();
