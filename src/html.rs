@@ -51,10 +51,10 @@ pub async fn write_html<P: AsRef<Path>>(
 ) -> Result<()> {
     trace!("Entered HTML generator.");
 
-    let liquid_parser = liquid::ParserBuilder::with_stdlib().build().unwrap();
-    let preamble_template = liquid_parser.parse(PREAMBLE_TEMPLATE).unwrap();
-    let postamble_template = liquid_parser.parse(POSTAMBLE_TEMPLATE).unwrap();
-    let message_group_template = liquid_parser.parse(MESSAGE_GROUP_TEMPLATE).unwrap();
+    let liquid_parser = liquid::ParserBuilder::with_stdlib().build()?;
+    let preamble_template = liquid_parser.parse(PREAMBLE_TEMPLATE)?;
+    let postamble_template = liquid_parser.parse(POSTAMBLE_TEMPLATE)?;
+    let message_group_template = liquid_parser.parse(MESSAGE_GROUP_TEMPLATE)?;
 
     let category_name = match channel.category_id {
         Some(x) => x.name(&ctx).await,
@@ -85,10 +85,12 @@ pub async fn write_html<P: AsRef<Path>>(
         let author = &message.author;
 
         let author_highest_role = message_renderer
-            .get_highest_role(&message.author, guild)
+            .get_highest_role_with_colour(&message.author, guild)
             .await;
 
         let content = message_renderer.render_message(&message).await;
+
+        println!("{:?}", author_highest_role);
 
         let message_liquid_objects = liquid::object!({
             "author_avatar_url": author.face(),
@@ -107,9 +109,7 @@ pub async fn write_html<P: AsRef<Path>>(
             "message_id": message.id.0,
         });
 
-        let message_group = message_group_template
-            .render(&message_liquid_objects)
-            .unwrap();
+        let message_group = message_group_template.render(&message_liquid_objects)?;
         html.push_str(&message_group);
         trace!("Archived message {} / {}", i + 1, messages.len());
     }
@@ -514,23 +514,21 @@ impl<'context> MessageRenderer<'context> {
             .and_then(|ref x| x.nick.as_deref())
     }
 
-    async fn get_highest_role(
+    async fn get_highest_role_with_colour(
         &mut self,
         user: &User,
         guild: &'context Guild,
     ) -> Option<&'context Role> {
-        let member = match self.get_member_cached(&user.id).await {
-            Some(x) => x,
-            None => return None,
-        };
+        let member = self.get_member_cached(&user.id).await?;
 
         let mut roles: Vec<_> = member
             .roles
             .iter()
-            .map(|roleid| guild.roles.get(roleid).unwrap())
+            .flat_map(|roleid| guild.roles.get(roleid))
             .collect();
         roles.sort_unstable_by_key(|role| role.position);
-        roles.last().copied()
+
+        roles.iter().rev().find(|role| role.colour.0 != 0).copied()
     }
 }
 
