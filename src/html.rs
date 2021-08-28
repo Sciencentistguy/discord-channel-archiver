@@ -9,8 +9,8 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use serenity::model::channel::GuildChannel;
 use serenity::model::channel::Message;
-use serenity::model::guild::Guild;
 use serenity::model::guild::Member;
+use serenity::model::guild::PartialGuild;
 use serenity::model::guild::Role;
 use serenity::model::id::ChannelId;
 use serenity::model::id::UserId;
@@ -44,7 +44,7 @@ static QUOTE_REGEX: Lazy<Regex> =
 
 pub async fn write_html<P: AsRef<Path>>(
     ctx: &Context,
-    guild: &Guild,
+    guild: &PartialGuild,
     channel: &GuildChannel,
     messages: &[Message],
     path: P,
@@ -78,7 +78,7 @@ pub async fn write_html<P: AsRef<Path>>(
 
     let channels = guild.channels(&ctx).await?;
 
-    let mut message_renderer = MessageRenderer::new(&ctx, &guild, channels);
+    let mut message_renderer = MessageRenderer::new(ctx, guild, channels).await;
 
     trace!("Begin saving messages");
     for (i, message) in messages.iter().enumerate() {
@@ -88,7 +88,7 @@ pub async fn write_html<P: AsRef<Path>>(
             .get_highest_role_with_colour(&message.author, guild)
             .await;
 
-        let content = message_renderer.render_message(&message).await;
+        let content = message_renderer.render_message(message).await;
 
         let message_liquid_objects = liquid::object!({
             "author_avatar_url": author.face(),
@@ -135,16 +135,16 @@ struct MessageRenderer<'context> {
     channel_names: HashMap<u64, String>,
     members: HashMap<UserId, Option<Member>>,
     usernames: HashMap<UserId, Option<String>>,
-    guild: &'context Guild,
+    guild: &'context PartialGuild,
     ctx: &'context Context,
 }
 
 impl<'context> MessageRenderer<'context> {
-    fn new(
+    async fn new(
         ctx: &'context Context,
-        guild: &'context Guild,
+        guild: &'context PartialGuild,
         mut channels: HashMap<ChannelId, GuildChannel>,
-    ) -> Self {
+    ) -> MessageRenderer<'context> {
         trace!("Begin getting channel names");
         let mut channel_names = HashMap::new();
         for (id, channel) in channels.iter_mut() {
@@ -154,9 +154,11 @@ impl<'context> MessageRenderer<'context> {
         Self {
             channel_names,
             members: guild
-                .members
-                .iter()
-                .map(|(&k, v)| (k, Some(v.clone())))
+                .members(&ctx, None, None)
+                .await
+                .expect("Failed to retrieve members")
+                .into_iter()
+                .map(|m| (m.user.id, Some(m)))
                 .collect(),
             usernames: HashMap::new(),
             guild,
@@ -184,7 +186,7 @@ impl<'context> MessageRenderer<'context> {
             {
                 Ok(x) => {
                     self.usernames.insert(*user_id, Some(x));
-                    self.usernames.get(&user_id).and_then(Option::as_deref)
+                    self.usernames.get(user_id).and_then(Option::as_deref)
                 }
                 Err(e) => {
                     warn!(
@@ -213,7 +215,7 @@ impl<'context> MessageRenderer<'context> {
             None => match self.guild.member(&self.ctx, user_id).await {
                 Ok(x) => {
                     self.members.insert(*user_id, Some(x));
-                    self.members.get(&user_id).and_then(Option::as_ref)
+                    self.members.get(user_id).and_then(Option::as_ref)
                 }
                 Err(_) => {
                     warn!("User with id '{}' not found in channel.", user_id);
@@ -505,13 +507,13 @@ impl<'context> MessageRenderer<'context> {
     async fn get_nickname(&mut self, user: &User) -> Option<&str> {
         self.get_member_cached(&user.id)
             .await
-            .and_then(|ref x| x.nick.as_deref())
+            .and_then(|x| x.nick.as_deref())
     }
 
     async fn get_highest_role_with_colour(
         &mut self,
         user: &User,
-        guild: &'context Guild,
+        guild: &'context PartialGuild,
     ) -> Option<&'context Role> {
         let member = self.get_member_cached(&user.id).await?;
 

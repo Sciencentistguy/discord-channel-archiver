@@ -9,7 +9,7 @@ use serde::Serialize;
 use serde_json::json;
 use serenity::model::channel::Message;
 use serenity::model::channel::MessageType;
-use serenity::model::guild::Guild;
+use serenity::model::guild::PartialGuild;
 use serenity::prelude::Context;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -60,7 +60,7 @@ struct MessageJson<'a> {
 
 pub async fn write_json<P: AsRef<Path>>(
     ctx: &Context,
-    guild: &Guild,
+    guild: &PartialGuild,
     messages: &[Message],
     path: P,
 ) -> Result<()> {
