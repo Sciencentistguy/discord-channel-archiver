@@ -28,10 +28,8 @@ I have some planned features that I am yet to finish (or even start) implementin
 
 ---
 
-Based on [Serenity](https://github.com/serenity-rs/serenity).
-
-Inspired by [this](https://github.com/Tyrrrz/DiscordChatExporter) similar program.
+Inspired by [DiscordChatExporter](https://github.com/Tyrrrz/DiscordChatExporter).
 
 The HTML / CSS templates are derived from the ones from [DiscordChatExporter](https://github.com/Tyrrrz/DiscordChatExporter), under the terms of the GNU GPL.
 
-Available under the terms of the GNU AGPL.
+For licence information, see [licence.md].
