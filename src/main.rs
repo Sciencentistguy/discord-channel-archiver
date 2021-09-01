@@ -28,15 +28,17 @@ use crate::emoji::archive_emoji;
 
 type Result<T> = std::result::Result<T, error::Error>;
 
-const USAGE_STRING: &str = "Invalid syntax.\n Correct usage is `!archive <channel> [mode]`,\
-                            where `channel` is the channel you want to archive, and `mode`\
-                            is one of either `json` or `html`. If this is blank, or if is\
+const USAGE_STRING: &str = "Invalid syntax.\n\
+                            Correct usage is `!archive <channel> [mode]`, \
+                            where `channel` is the channel you want to archive, and `mode` \
+                            is one of either `json` or `html`. If this is blank, or if is \
                             any other value, all output formats will be generated.";
 
 const REPLY_FAILURE: &str = "Failed to reply to message";
 
 static COMMAND_REGEX: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^!archive +<#(\d+)> *([\w,]+)?$").unwrap());
+
 static OPTIONS: Lazy<Opt> = Lazy::new(Opt::from_args);
 
 #[tokio::main]
@@ -84,7 +86,7 @@ async fn main() {
 struct ArchiveLog {
     download_time: std::time::Duration,
     render_time: std::time::Duration,
-    files_created: Vec<String>,
+    files_created: Vec<PathBuf>,
 }
 
 async fn archive(
@@ -95,15 +97,25 @@ async fn archive(
 ) -> Result<ArchiveLog> {
     trace!("Begin downloading messages");
     let start = std::time::Instant::now();
+
+    // Download messages
     let messages = {
-        let mut messages = channel.messages(&ctx, |r| r.limit(100)).await?;
+        /// The discord api limits us to retrieving 100 messages at a time
+        /// See <https://discord.com/developers/docs/resources/channel#get-channel-messages>
+        const MESSAGE_DOWNLOAD_LIMIT: u64 = 100;
+
+        // Download the first 100 messages outside the loop, as the retriever closure is different
+        let mut messages = channel
+            .messages(&ctx, |r| r.limit(MESSAGE_DOWNLOAD_LIMIT))
+            .await?;
+
         trace!("Downloaded {} messages...", messages.len());
-        let mut x = 100;
-        while x == 100 {
+
+        loop {
             let last_msg = messages.last().unwrap();
             let new_msgs = match channel
                 .id
-                .messages(&ctx, |retreiver| retreiver.before(last_msg.id).limit(100))
+                .messages(&ctx, |retriever| retriever.before(last_msg.id).limit(100))
                 .await
             {
                 Ok(x) => x,
@@ -117,52 +129,64 @@ async fn archive(
                     continue;
                 }
             };
-            x = new_msgs.len();
+            let recv_count = new_msgs.len();
+
             messages.extend(new_msgs.into_iter());
-            trace!("Downloaded {} messages...", messages.len());
+
+            // If the api sends fewer than 100 messages, we have fetched all the messages in the
+            // channel
+            if recv_count != 100 {
+                messages.reverse();
+                break messages;
+            }
         }
-        messages.reverse();
-        messages
     };
     let end = std::time::Instant::now();
     let download_time = end - start;
+
     info!(
         "Downloaded {} messages. Took {:.2}s",
         messages.len(),
         download_time.as_secs_f64()
     );
-    let output_path = OPTIONS.output_path.to_string_lossy();
-    let output_filename = format!(
-        "{}{}{}-{}",
-        output_path,
-        if output_path.ends_with('/') { "" } else { "/" },
+
+    let output_file_stem_common = format!(
+        "{}-{}",
         guild.name.replace(char::is_whitespace, "_"),
         channel.name.replace(char::is_whitespace, "_"),
     );
 
-    let mut files_created: Vec<String> = Vec::new();
+    let mut files_created = Vec::new();
 
     // XXX This is a litte ugly.
     let start = std::time::Instant::now();
     match output_mode {
         ArchivalMode::Json => {
-            let filename = format!("{}.json", output_filename);
-            json::write_json(ctx, guild, &messages, &filename).await?;
-            files_created.push(filename);
+            let output_path = OPTIONS
+                .output_path
+                .join(format!("{}.json", output_file_stem_common));
+            json::write_json(ctx, guild, &messages, &output_path).await?;
+            files_created.push(output_path);
         }
         ArchivalMode::Html => {
-            let filename = format!("{}.html", output_filename);
-            html::write_html(ctx, guild, channel, &messages, &filename).await?;
-            files_created.push(filename);
+            let output_path = OPTIONS
+                .output_path
+                .join(format!("{}.html", output_file_stem_common));
+            html::write_html(ctx, guild, channel, &messages, &output_path).await?;
+            files_created.push(output_path);
         }
         ArchivalMode::All => {
-            let filename = format!("{}.json", output_filename);
-            json::write_json(ctx, guild, &messages, &filename).await?;
-            files_created.push(filename);
+            let output_path = OPTIONS
+                .output_path
+                .join(format!("{}.json", output_file_stem_common));
+            json::write_json(ctx, guild, &messages, &output_path).await?;
+            files_created.push(output_path);
 
-            let filename = format!("{}.html", output_filename);
-            html::write_html(ctx, guild, channel, &messages, &filename).await?;
-            files_created.push(filename);
+            let output_path = OPTIONS
+                .output_path
+                .join(format!("{}.html", output_file_stem_common));
+            html::write_html(ctx, guild, channel, &messages, &output_path).await?;
+            files_created.push(output_path);
         }
     }
     let end = std::time::Instant::now();
@@ -174,6 +198,49 @@ async fn archive(
         render_time,
         files_created,
     })
+}
+
+fn archive_response(
+    ArchiveLog {
+        download_time,
+        render_time,
+        files_created,
+    }: ArchiveLog,
+) -> String {
+    let download_time = if download_time.as_secs() >= 1 {
+        format!(
+            "{}m{:02}s",
+            download_time.as_secs() / 60,
+            download_time.as_secs() % 60,
+        )
+    } else {
+        format!("{}ms", download_time.as_millis())
+    };
+    let render_time = if render_time.as_secs() >= 1 {
+        format!(
+            "{}m{:02}s",
+            render_time.as_secs() / 60,
+            render_time.as_secs() % 60,
+        )
+    } else {
+        format!("{}ms", render_time.as_millis())
+    };
+    format!(
+        "Archival complete!\
+        Downloading messages took {}.\n\
+        Rendering output took {}.\n\
+        Created the following files:\n\
+        ```\n\
+        {}\n\
+        ```",
+        download_time,
+        render_time,
+        files_created
+            .iter()
+            .map(|x| x.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("\n")
+    )
 }
 
 struct Handler;
@@ -266,32 +333,26 @@ impl EventHandler for Handler {
                                     .to_partial_guild(&ctx)
                                     .await
                                     .expect("Failed to fetch guild");
+                                info!(
+                                    "Archive started by user '{}#{:04}' in guild '{}'\
+                                    , in channel '{}', with mode '{}'",
+                                    command.user.name,
+                                    command.user.discriminator,
+                                    guild.name,
+                                    channel.name,
+                                    mode,
+                                );
                                 match archive(&ctx, &channel, &guild, mode).await {
-                                    Ok(archive_log) => {
-                                        let download_seconds =
-                                            archive_log.download_time.as_secs() % 60;
-                                        let download_minutes =
-                                            archive_log.download_time.as_secs() / 60;
-                                        let render_seconds = archive_log.render_time.as_secs() % 60;
-                                        let render_minutes = archive_log.render_time.as_secs() / 60;
+                                    Ok(archive_log) => archive_response(archive_log),
+                                    Err(e) => {
+                                        error!("{}", e);
                                         format!(
-                                            "Done!\n\
-                                            Downloading messages took {}m{:02}s\n\
-                                            Rendering output took {}m{:02}s\n\
-                                            Created files:\n\
+                                            "An error has occurred!\n\
                                             ```\n\
                                             {}\n\
                                             ```",
-                                            &download_minutes,
-                                            &download_seconds,
-                                            &render_minutes,
-                                            &render_seconds,
-                                            archive_log.files_created.join("\n")
+                                            e
                                         )
-                                    }
-                                    Err(e) => {
-                                        error!("{}", e);
-                                        format!("Error!\n```\n{}\n```", e)
                                     }
                                 }
                             }
@@ -346,7 +407,7 @@ impl EventHandler for Handler {
                 }
                 let capts = capts.unwrap();
                 let channel_id_str = &capts[1];
-                let modes = match capts.get(2).map(|x| x.as_str()) {
+                let mode = match capts.get(2).map(|x| x.as_str()) {
                     Some("json") => ArchivalMode::Json,
                     Some("html") => ArchivalMode::Html,
                     _ => ArchivalMode::All,
@@ -380,43 +441,28 @@ impl EventHandler for Handler {
                 };
 
                 info!(
-                    "Archive started by user '{}#{:04}' in guild '{}', in channel '{}', with modes '{}'",
+                    "Archive started by user '{}#{:04}' in guild '{}', in channel '{}', with mode '{}'",
                     msg.author.name,
                     msg.author.discriminator,
                     guild.name,
                     channel.name,
-                    modes
+                    mode
                 );
 
-                let archive_log = match archive(&ctx, &channel, &guild, modes).await {
-                    Ok(x) => x,
+                let response = match archive(&ctx, &channel, &guild, mode).await {
+                    Ok(archive_log) => archive_response(archive_log),
                     Err(e) => {
                         error!("{}", e);
-                        msg.reply(&ctx, format!("Error!\n```\n{}\n```", e))
-                            .await
-                            .expect(REPLY_FAILURE);
-                        return;
+                        format!(
+                            "An error has occurred!\n\
+                                            ```\n\
+                                            {}\n\
+                                            ```",
+                            e
+                        )
                     }
                 };
 
-                let download_seconds = archive_log.download_time.as_secs() % 60;
-                let download_minutes = archive_log.download_time.as_secs() / 60;
-                let render_seconds = archive_log.render_time.as_secs() % 60;
-                let render_minutes = archive_log.render_time.as_secs() / 60;
-                let response = format!(
-                    "Done!\n\
-                    Downloading messages took {}m{:02}s\n\
-                    Rendering output took {}m{:02}s\n\
-                    Created files:\n\
-                    ```\n\
-                    {}\n\
-                    ```",
-                    &download_minutes,
-                    &download_seconds,
-                    &render_minutes,
-                    &render_seconds,
-                    archive_log.files_created.join("\n")
-                );
                 msg.reply(&ctx, response).await.expect(REPLY_FAILURE);
             }
         }
