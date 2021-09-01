@@ -41,6 +41,21 @@ static URL_REGEX: Lazy<Regex> = Lazy::new(|| {
 static QUOTE_REGEX: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?:^|<br>)((?:&gt;[^<\n]*(?:<br>)?)+)").unwrap());
 
+pub fn prebuild_regexes() {
+    Lazy::force(&CUSTOM_EMOJI_REGEX);
+    Lazy::force(&BOLD_REGEX);
+    Lazy::force(&UNDERLINE_REGEX);
+    Lazy::force(&ITALICS_REGEX);
+    Lazy::force(&ITALICS_REGEX2);
+    Lazy::force(&STRIKETHROUGH_REGEX);
+    Lazy::force(&CHANNEL_MENTION_REGEX);
+    Lazy::force(&USER_MENTION_REGEX);
+    Lazy::force(&URL_REGEX);
+    Lazy::force(&QUOTE_REGEX);
+
+    trace!("Forced regexes");
+}
+
 pub async fn write_html<P: AsRef<Path>>(
     ctx: &Context,
     guild: &PartialGuild,

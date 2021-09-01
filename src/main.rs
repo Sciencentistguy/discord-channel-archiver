@@ -59,6 +59,8 @@ async fn main() {
 
     trace!("Token: {}", token);
 
+    tokio::spawn(async { html::prebuild_regexes() });
+
     // Create a new instance of the Client, logging in as a bot. This will
     // automatically prepend your bot token with "Bot ", which is a requirement
     // by Discord for bot users.
