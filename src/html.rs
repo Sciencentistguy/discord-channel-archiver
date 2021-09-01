@@ -1,7 +1,6 @@
 use crate::Result;
 
 use std::collections::HashMap;
-use std::fs;
 use std::path::Path;
 
 use log::*;
@@ -124,7 +123,7 @@ pub async fn write_html<P: AsRef<Path>>(
     );
 
     trace!("Writing html file {:?}", path.as_ref());
-    fs::write(path, html)?;
+    tokio::fs::write(path, html).await?;
 
     info!("HTML generation complete.");
 

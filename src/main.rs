@@ -47,8 +47,11 @@ async fn main() {
     }
     pretty_env_logger::init();
 
-    let token = std::fs::read_to_string(&OPTIONS.token_filename).expect("File does not exist");
-    let application_id = std::fs::read_to_string(&OPTIONS.appid_filename)
+    let token = tokio::fs::read_to_string(&OPTIONS.token_filename)
+        .await
+        .expect("File does not exist");
+    let application_id = tokio::fs::read_to_string(&OPTIONS.appid_filename)
+        .await
         .expect("File does not exist")
         .trim()
         .parse::<u64>()

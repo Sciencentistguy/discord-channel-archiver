@@ -1,6 +1,5 @@
 use crate::Result;
 
-use std::fs;
 use std::path::Path;
 
 use log::*;
@@ -129,8 +128,10 @@ pub async fn write_json<P: AsRef<Path>>(
         "channel" : channel_json,
         "messages" : message_jsons
     });
-    let file = fs::File::create(path)?;
-    serde_json::to_writer_pretty(file, &json)?;
+
+    let output = serde_json::to_string_pretty(&json)?;
+    tokio::fs::write(path, output).await?;
+    //serde_json::to_writer_pretty(file, &json)?;
     info!("JSON generation complete.");
     Ok(())
 }
