@@ -7,10 +7,10 @@ mod json;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use log::*;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serenity::async_trait;
+use serenity::model::channel::Channel;
 use serenity::model::channel::GuildChannel;
 use serenity::model::channel::Message;
 use serenity::model::gateway::Ready;
@@ -23,6 +23,7 @@ use serenity::model::interactions::Interaction;
 use serenity::model::interactions::InteractionResponseType;
 use serenity::prelude::*;
 use structopt::StructOpt;
+use tracing::*;
 
 use crate::emoji::archive_emoji;
 
@@ -43,11 +44,12 @@ static OPTIONS: Lazy<Opt> = Lazy::new(Opt::from_args);
 
 #[tokio::main]
 async fn main() {
-    // Set default log level to info unless otherwise specified.
-    if std::env::var("RUST_LOG").is_err() {
-        std::env::set_var("RUST_LOG", "discord_channel_archiver=info");
-    }
-    pretty_env_logger::init();
+    tracing_subscriber::fmt()
+        .pretty()
+        .with_max_level(Level::INFO)
+        .init();
+
+    //pretty_env_logger::init();
 
     let token = tokio::fs::read_to_string(&OPTIONS.token_filename)
         .await
@@ -59,7 +61,7 @@ async fn main() {
         .parse::<u64>()
         .expect("Invalid application_id");
 
-    trace!("Token: {}", token);
+    trace!(%token);
 
     tokio::spawn(async { html::prebuild_regexes() });
 
@@ -72,14 +74,14 @@ async fn main() {
         .await
         .expect("Err creating client");
 
-    trace!("Created client.");
+    trace!(%token, "Created client");
 
     // Finally, start a single shard, and start listening to events.
     //
     // Shards will automatically attempt to reconnect, and will perform
     // exponential backoff until it reconnects.
     if let Err(why) = client.start().await {
-        error!("Client error: {:?}", why);
+        error!(error = ?why, "An error occurred in the client");
     }
 }
 
@@ -89,6 +91,7 @@ struct ArchiveLog {
     files_created: Vec<PathBuf>,
 }
 
+#[instrument(skip_all)]
 async fn archive(
     ctx: &Context,
     channel: &GuildChannel,
@@ -109,7 +112,7 @@ async fn archive(
             .messages(&ctx, |r| r.limit(MESSAGE_DOWNLOAD_LIMIT))
             .await?;
 
-        trace!("Downloaded {} messages...", messages.len());
+        trace!(download_count = %messages.len());
 
         loop {
             let last_msg = messages.last().unwrap();
@@ -121,9 +124,10 @@ async fn archive(
                 Ok(x) => x,
                 Err(e) => {
                     warn!(
+                        error = ?e,
+                        download_count= %messages.len(),
                         "While trying to download messages, \
-                        Discord returned an error `{}`. Waiting 5 seconds before retrying",
-                        e
+                        Discord returned an error. Waiting 5 seconds before retrying",
                     );
                     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                     continue;
@@ -141,13 +145,14 @@ async fn archive(
             }
         }
     };
+
     let end = std::time::Instant::now();
     let download_time = end - start;
 
     info!(
-        "Downloaded {} messages. Took {:.2}s",
-        messages.len(),
-        download_time.as_secs_f64()
+        count = %messages.len(),
+        time_taken = ?download_time,
+        "Downloaded messages"
     );
 
     let output_file_stem_common = format!(
@@ -192,7 +197,8 @@ async fn archive(
     let end = std::time::Instant::now();
     let render_time = end - start;
 
-    info!("Archive complete.");
+    info!(time_taken = ?(download_time + render_time), "Archive complete");
+
     Ok(ArchiveLog {
         download_time,
         render_time,
@@ -302,7 +308,7 @@ impl EventHandler for Handler {
                         .and_then(|o| o.resolved.as_ref())
                     {
                         Some(ApplicationCommandInteractionDataOptionValue::Channel(c)) => c,
-                        _ => panic!("Expected channel as first argument"),
+                        _ => unreachable!("Expected channel as first argument"),
                     }
                     .id
                     .to_channel(&ctx)
@@ -320,32 +326,37 @@ impl EventHandler for Handler {
                                 "json" => ArchivalMode::Json,
                                 "html" => ArchivalMode::Html,
                                 "all" => ArchivalMode::All,
-                                _ => panic!("Invalid string choice"),
+                                _ => unreachable!("Invalid string choice"),
                             }
                         }
-                        _ => panic!("Expected format as second argument"),
+                        _ => unreachable!("Expected format as second argument"),
                     };
 
-                    match channel.guild() {
-                        Some(channel) => match command.guild_id {
+                    match channel {
+                        Channel::Guild(channel) => match command.guild_id {
                             Some(guild_id) => {
                                 let guild = guild_id
                                     .to_partial_guild(&ctx)
                                     .await
                                     .expect("Failed to fetch guild");
+
                                 info!(
-                                    "Archive started by user '{}#{:04}' in guild '{}'\
-                                    , in channel '{}', with mode '{}'",
-                                    command.user.name,
-                                    command.user.discriminator,
-                                    guild.name,
-                                    channel.name,
-                                    mode,
+                                    user = %format!(
+                                        "{}#{:04}",
+                                        command.user.name,
+                                        command.user.discriminator
+                                        ),
+                                    guild = %guild.name,
+                                    channel = %channel.name,
+                                    ?mode,
+                                    "Archive requested"
                                 );
+
                                 match archive(&ctx, &channel, &guild, mode).await {
                                     Ok(archive_log) => archive_response(archive_log),
                                     Err(e) => {
-                                        error!("{}", e);
+                                        error!(error = ?e, "An error occurred in `archive()`");
+
                                         format!(
                                             "An error has occurred!\n\
                                             ```\n\
@@ -356,10 +367,18 @@ impl EventHandler for Handler {
                                     }
                                 }
                             }
-                            None => "This command must be used within a guild".to_owned(),
+                            None => {
+                                error!("Command used outside of a guild channel");
+
+                                "This command must be used within a guild".to_owned()
+                            }
                         },
-                        None => "Error: Argument `channel` must be a text channel in this guild."
-                            .to_owned(),
+                        _ => {
+                            error!(?channel, "Channel is not a text channel");
+
+                            "Error: Argument `channel` must be a text channel in this guild."
+                                .to_owned()
+                        }
                     }
                 }
                 _ => "Error: Invalid command".to_owned(),
@@ -402,7 +421,7 @@ impl EventHandler for Handler {
                 let capts = COMMAND_REGEX.captures(&msg.content);
                 if capts.as_ref().and_then(|x| x.get(0)).is_none() {
                     msg.reply(&ctx, USAGE_STRING).await.expect(REPLY_FAILURE);
-                    info!("Invalid archive command supplied: '{}'", &msg.content);
+                    info!(command = %msg.content, "Invalid archive command");
                     return;
                 }
                 let capts = capts.unwrap();
@@ -412,11 +431,12 @@ impl EventHandler for Handler {
                     Some("html") => ArchivalMode::Html,
                     _ => ArchivalMode::All,
                 };
-                trace!("Command parsed");
+                trace!(channel_id = %channel_id_str, ?mode, "Command parsed");
 
                 let channel = match ChannelId::from_str(channel_id_str) {
                     Ok(x) => x,
                     Err(_) => {
+                        error!(channel_id = %channel_id_str, "Invalid channel id");
                         msg.reply(&ctx, format!("Invalid channel id {}.", channel_id_str))
                             .await
                             .expect(REPLY_FAILURE);
@@ -432,32 +452,31 @@ impl EventHandler for Handler {
                 let guild = match msg.guild_id {
                     Some(guild_id) => guild_id.to_partial_guild(&ctx).await.unwrap(),
                     None => {
+                        error!(?channel, "Channel is not a guild channel");
                         msg.reply(&ctx, "This bot must be used in a guild channel.")
                             .await
                             .expect(REPLY_FAILURE);
-                        error!("This bot must be used in a guild channel.");
                         return;
                     }
                 };
 
                 info!(
-                    "Archive started by user '{}#{:04}' in guild '{}', in channel '{}', with mode '{}'",
-                    msg.author.name,
-                    msg.author.discriminator,
-                    guild.name,
-                    channel.name,
-                    mode
+                    user = %format!("{}#{:04}", msg.author.name, msg.author.discriminator),
+                    guild = %guild.name,
+                    channel = %channel.name,
+                    ?mode,
+                    "Archive requested"
                 );
 
                 let response = match archive(&ctx, &channel, &guild, mode).await {
                     Ok(archive_log) => archive_response(archive_log),
                     Err(e) => {
-                        error!("{}", e);
+                        error!(error = ?e, "An error occurred in archive()");
                         format!(
                             "An error has occurred!\n\
-                                            ```\n\
-                                            {}\n\
-                                            ```",
+                            ```\n\
+                            {}\n\
+                            ```",
                             e
                         )
                     }
@@ -469,11 +488,7 @@ impl EventHandler for Handler {
     }
 
     async fn ready(&self, ctx: Context, ready: Ready) {
-        info!(
-            "Bot logged in with username {} to {} guilds!",
-            ready.user.name,
-            ready.guilds.len()
-        );
+        info!(name = %ready.user.name, num_guilds = %ready.guilds.len(), "Bot logged in");
 
         let commands = ApplicationCommand::set_global_application_commands(&ctx, |builder| {
             builder
@@ -509,11 +524,11 @@ impl EventHandler for Handler {
         .unwrap();
 
         info!(
-            "Registered the following slash commands: {:?}",
-            commands
+            commands = ?commands
                 .iter()
                 .map(|cmd| cmd.name.as_str())
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>(),
+            "Registered slash commands",
         );
     }
 }

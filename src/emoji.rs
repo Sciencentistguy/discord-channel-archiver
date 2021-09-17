@@ -1,13 +1,17 @@
 use std::path::PathBuf;
 
+// Tracing appears to get angry without this `use`
+use std::file;
+
 use crate::file;
 use crate::OPTIONS;
 
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
-use log::*;
 use serenity::model::guild::PartialGuild;
+use tracing::*;
 
+#[instrument(skip_all)]
 pub async fn archive_emoji(guild: PartialGuild) -> (usize, PathBuf) {
     info!("Starting emoji archive");
     let output_directory = OPTIONS.output_path.join(format!(
@@ -33,9 +37,13 @@ pub async fn archive_emoji(guild: PartialGuild) -> (usize, PathBuf) {
         .collect();
 
     #[allow(clippy::redundant_pattern_matching)]
-    while let Some(_) = fut.next().await {}
+    while let Some(x) = fut.next().await {
+        if let Err(e) = x {
+            error!(error = ?e, "Failed to download an emoji");
+        }
+    }
 
-    info!("Downloads complete. Archived {} emoji.", n);
+    info!(?n, "Emoji download complete");
 
     (n, output_directory)
 }

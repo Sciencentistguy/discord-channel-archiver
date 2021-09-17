@@ -2,18 +2,16 @@ use crate::Result;
 
 use std::path::Path;
 
-use log::*;
+use tracing::*;
 
+#[instrument(skip(destination_filename))]
 pub async fn download_url<P>(url: String, destination_filename: P) -> Result<()>
 where
     P: AsRef<Path>,
 {
     let destination_filename = destination_filename.as_ref();
-    info!(
-        "Downloading `{}` to `{}`",
-        url,
-        destination_filename.to_str().unwrap()
-    );
+    info!(%url, ?destination_filename, "Downloading file");
+
     let response = reqwest::get(url.as_str()).await?;
 
     let destdir = destination_filename

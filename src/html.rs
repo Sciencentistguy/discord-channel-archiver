@@ -3,7 +3,6 @@ use crate::Result;
 use std::collections::HashMap;
 use std::path::Path;
 
-use log::*;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serenity::model::channel::GuildChannel;
@@ -15,6 +14,7 @@ use serenity::model::id::ChannelId;
 use serenity::model::id::UserId;
 use serenity::model::user::User;
 use serenity::prelude::Context;
+use tracing::*;
 
 const CORE_THEME_CSS: &str = include_str!("html_templates/core.css");
 const DARK_THEME_CSS: &str = include_str!("html_templates/dark.css");
@@ -56,6 +56,7 @@ pub fn prebuild_regexes() {
     trace!("Forced regexes");
 }
 
+#[instrument(skip_all)]
 pub async fn write_html<P: AsRef<Path>>(
     ctx: &Context,
     guild: &PartialGuild,
@@ -63,7 +64,7 @@ pub async fn write_html<P: AsRef<Path>>(
     messages: &[Message],
     path: P,
 ) -> Result<()> {
-    trace!("Entered HTML generator.");
+    trace!("Entered HTML generator");
 
     let liquid_parser = liquid::ParserBuilder::with_stdlib().build()?;
     let preamble_template = liquid_parser.parse(PREAMBLE_TEMPLATE)?;
@@ -94,7 +95,7 @@ pub async fn write_html<P: AsRef<Path>>(
 
     let mut message_renderer = MessageRenderer::new(ctx, guild, channels).await;
 
-    trace!("Begin saving messages");
+    trace!("Begin generating message HTML");
     for (i, message) in messages.iter().enumerate() {
         let author = &message.author;
 
@@ -123,9 +124,8 @@ pub async fn write_html<P: AsRef<Path>>(
 
         let message_group = message_group_template.render(&message_liquid_objects)?;
         html.push_str(&message_group);
-        trace!("Archived message {} / {}", i + 1, messages.len());
+        trace!("Generated message html {} / {}", i + 1, messages.len());
     }
-    trace!("Generated message html");
 
     let postamble_liquid_objects = liquid::object!({
         "num_exported_messages": messages.len(),
@@ -137,10 +137,10 @@ pub async fn write_html<P: AsRef<Path>>(
             .as_str(),
     );
 
-    trace!("Writing html file {:?}", path.as_ref());
+    trace!(path = ?path.as_ref(), "Writing html file");
     tokio::fs::write(path, html).await?;
 
-    info!("HTML generation complete.");
+    info!("HTML generation complete");
 
     Ok(())
 }
@@ -154,16 +154,18 @@ struct MessageRenderer<'context> {
 }
 
 impl<'context> MessageRenderer<'context> {
+    #[instrument(skip_all)]
     async fn new(
         ctx: &'context Context,
         guild: &'context PartialGuild,
-        mut channels: HashMap<ChannelId, GuildChannel>,
+        channels: HashMap<ChannelId, GuildChannel>,
     ) -> MessageRenderer<'context> {
         trace!("Begin getting channel names");
-        let mut channel_names = HashMap::new();
-        for (id, channel) in channels.iter_mut() {
-            channel_names.insert(*id.as_u64(), std::mem::take(&mut channel.name));
-        }
+
+        let channel_names = channels
+            .into_iter()
+            .map(|(id, channel)| (id.0, channel.name))
+            .collect();
 
         Self {
             channel_names,
@@ -180,6 +182,7 @@ impl<'context> MessageRenderer<'context> {
         }
     }
 
+    #[instrument(skip_all)]
     async fn get_username_cached(&mut self, user_id: &UserId) -> Option<&str> {
         if let Some(m) = self.usernames.get(user_id) {
             // It is more obvious that this is safe with a match
@@ -204,8 +207,9 @@ impl<'context> MessageRenderer<'context> {
                 }
                 Err(e) => {
                     warn!(
-                        "User id '{}' is not associated with a user. ({})",
-                        user_id, e
+                        ?user_id,
+                        error = ?e,
+                        "User id is not associated with a user",
                     );
                     self.usernames.insert(*user_id, None);
                     None
@@ -214,6 +218,7 @@ impl<'context> MessageRenderer<'context> {
         }
     }
 
+    #[instrument(skip_all)]
     async fn get_member_cached(&mut self, user_id: &UserId) -> Option<&Member> {
         match self.members.get(user_id) {
             Some(member) => {
@@ -232,7 +237,7 @@ impl<'context> MessageRenderer<'context> {
                     self.members.get(user_id).and_then(Option::as_ref)
                 }
                 Err(_) => {
-                    warn!("User with id '{}' not found in channel.", user_id);
+                    warn!(%user_id, "User id not found in channel");
                     self.members.insert(*user_id, None);
                     None
                 }
@@ -240,9 +245,10 @@ impl<'context> MessageRenderer<'context> {
         }
     }
 
+    #[instrument(skip_all)]
     async fn render_message(&mut self, message: &serenity::model::channel::Message) -> String {
         let content = message.content.as_str();
-        trace!("Rendering message:\n{}.", content);
+        trace!(%content, "Rendering message");
         let start = std::time::Instant::now();
 
         // Ampersands break things
@@ -256,6 +262,9 @@ impl<'context> MessageRenderer<'context> {
 
         // Multiline code blocks
         let mut content = {
+            // TODO Make this more unique, possibly random
+            const URL_PLACEHOLDER: &str = "!!URL_PLACEHOLDER!!";
+
             // Maximum length of a discord message is 2000 characters. It is therefore unlikely that
             // a formatted message will exceed 8000 characters
             let mut out = String::with_capacity(8000 * std::mem::size_of::<char>());
@@ -295,50 +304,55 @@ impl<'context> MessageRenderer<'context> {
 
                             // URLs
                             while let Some(m) = URL_REGEX.find(block.as_str()) {
-                                trace!("Found URL '{}' in '{}'", m.as_str(), content);
+                                trace!(url = %m.as_str(), "Found URL");
                                 if m.as_str() == content
                                     && IMAGE_FILE_EXTS.iter().any(|x| m.as_str().ends_with(x))
                                 {
-                                    trace!("Found image embed '{}'.", m.as_str());
+                                    trace!("URL is an image embed");
                                     return format!(
                                         r#"<span class="chatlog__embed-image-container">
-            <a href="{0:}" target="_blank">
-            <img class="chatlog__embed-image" title="{0:}", src="{0:}" alt="{0:}"/>
-            </a>
-            </span><br>"#,
+                                        <a href="{0:}" target="_blank">
+                                        <img 
+                                            class="chatlog__embed-image"
+                                            title="{0:}"
+                                            src="{0:}"
+                                            alt="{0:}"
+                                        />
+                                        </a>
+                                        </span><br>"#,
                                         m.as_str()
                                     );
                                 }
                                 let s = strip_html_newlines(m.as_str());
                                 urls.push(s.to_owned());
-                                block = block.replace(s, "!!URL!!");
+                                block = block.replace(s, URL_PLACEHOLDER);
                             }
 
                             // Bold (double asterisk)
                             let block =
                                 BOLD_REGEX.replace_all(&block, |capts: &regex::Captures| {
-                                    trace!("Found bold block in '{}'", block);
+                                    trace!(contents = %&capts[1], "Found bold block");
                                     format!("<b>{}</b>", &capts[1])
                                 });
 
                             // Underline (double underscore)
                             let block =
                                 UNDERLINE_REGEX.replace_all(&block, |capts: &regex::Captures| {
-                                    trace!("Found underline block in '{}'", block);
+                                    trace!(contents = %&capts[1], "Found underline block");
                                     format!("<u>{}</u>", &capts[1])
                                 });
 
                             // Italics (single asterisk)
                             let block =
                                 ITALICS_REGEX.replace_all(&block, |capts: &regex::Captures| {
-                                    trace!("Found italics block in '{}'", block);
+                                    trace!(contents = %&capts[1], "Found italics block");
                                     format!("<i>{}</i>", &capts[1])
                                 });
 
-                            // Italics (single underscore)
+                            // Italics 2 (single underscore)
                             let block =
                                 ITALICS_REGEX2.replace_all(&block, |capts: &regex::Captures| {
-                                    trace!("Found italics 2 block in '{}'", block);
+                                    trace!(contents = %&capts[1], "Found italics 2 block");
                                     format!("<i>{}</i>", &capts[1])
                                 });
 
@@ -346,7 +360,7 @@ impl<'context> MessageRenderer<'context> {
                             let block = STRIKETHROUGH_REGEX.replace_all(
                                 &block,
                                 |capts: &regex::Captures| {
-                                    trace!("Found strikethrough block in '{}'", block);
+                                    trace!(contents = %&capts[1], "Found strikethrough block");
                                     format!("<s>{}</s>", &capts[1])
                                 },
                             );
@@ -361,7 +375,7 @@ impl<'context> MessageRenderer<'context> {
                                     let animated = &capts[2] == "a";
                                     let name = &capts[3];
                                     let id = &capts[4];
-                                    trace!("Found custom emoji '{}' in '{}'", name, block);
+                                    trace!(%name, "Found custom emoji");
                                     let url = match animated {
                                         true => {
                                             format!("https://cdn.discordapp.com/emojis/{}.gif", id)
@@ -372,11 +386,11 @@ impl<'context> MessageRenderer<'context> {
                                     };
                                     format!(
                                         r#"<img
-  class="emoji"
-  src="{0:}"
-  alt="{1:}"
-  title="{1:}"
-    />"#,
+                                           class="emoji"
+                                           src="{0:}"
+                                           alt="{1:}"
+                                           title="{1:}"
+                                           />"#,
                                         url, &capts[1]
                                     )
                                 },
@@ -385,9 +399,11 @@ impl<'context> MessageRenderer<'context> {
                             let block = CHANNEL_MENTION_REGEX.replace_all(
                                 &block,
                                 |capts: &regex::Captures| {
-                                    trace!("Found channel mention '{}' in '{}'", &capts[0], &block);
                                     let cid: u64 = capts[1].parse().unwrap();
                                     let name = self.channel_names.get(&cid);
+
+                                    trace!(mention = %&capts[0], "Found channel mention");
+
                                     match name {
                                         Some(x) => {
                                             format!("<span class=mention>#{}</span>", x)
@@ -400,10 +416,10 @@ impl<'context> MessageRenderer<'context> {
                                 },
                             );
 
-                            // Quote blocks
+                            // Quote blocks: (> )
                             let block =
                                 QUOTE_REGEX.replace_all(&block, |capts: &regex::Captures| {
-                                    trace!("Found quote block '{}' in '{}'", &capts[0], &block);
+                                    trace!(contents = %&capts[0], "Found quote block");
                                     let s = capts[1][4..].replace("<br>&gt;", "<br>");
                                     format!("<div class=quote>{}</div>", s)
                                 });
@@ -412,7 +428,7 @@ impl<'context> MessageRenderer<'context> {
 
                             // User mentions
                             while let Some(m) = USER_MENTION_REGEX.find(&block) {
-                                trace!("Found user mention '{}' in '{}'", m.as_str(), &block);
+                                trace!(mention = m.as_str(), "Found user mention");
                                 let uid: serenity::model::id::UserId = block
                                     [m.start() + 6..m.end() - 4]
                                     .parse::<u64>()
@@ -447,7 +463,7 @@ impl<'context> MessageRenderer<'context> {
                             // URLs part 2
                             for url in urls.iter() {
                                 block = block.replacen(
-                                    "!!URL!!",
+                                    URL_PLACEHOLDER,
                                     format!(r#"<a href="{0}">{0}</a>"#, url).as_str(),
                                     1,
                                 );
@@ -456,14 +472,15 @@ impl<'context> MessageRenderer<'context> {
                             out.push_str(block.as_str());
                         } else {
                             // Inline code block
-                            trace!("Found inline code block '{}' in '{}'", block, content);
+                            trace!(%block, "Found inline code block");
                             out.push_str(r#"<code class="pre pre--inline">"#);
                             out.push_str(block);
                             out.push_str("</code>");
                         }
                     }
                 } else {
-                    // in code block
+                    // In code block
+                    trace!(%whole_block, "Found code block");
                     out.push_str(r#"<pre class="pre pre--multiline">"#);
                     let b = whole_block.find("<br>").and_then(|idx| {
                         if whole_block[..idx].chars().all(|c| c.is_ascii()) {
@@ -489,18 +506,14 @@ impl<'context> MessageRenderer<'context> {
                 content.push_str("<br>");
             }
             for attachment in message.attachments.iter() {
-                trace!(
-                    "Found message attachment '{}' in message '{}'",
-                    attachment.url,
-                    message.content
-                );
+                trace!(url = %attachment.url, "Found message attachment");
                 if IMAGE_FILE_EXTS.iter().any(|x| attachment.url.ends_with(x)) {
                     content.push_str(&format!(
                         r#"<span class="chatlog__embed-image-container">
-    <a href="{0:}" target="_blank">
-        <img class="chatlog__embed-image" title="{0:}", src="{0:}" alt="{0:}"/>
-    </a>
-</span><br>"#,
+                        <a href="{0:}" target="_blank">
+                        <img class="chatlog__embed-image" title="{0:}", src="{0:}" alt="{0:}"/>
+                        </a>
+                        </span><br>"#,
                         attachment.url
                     ));
                 } else {
@@ -511,19 +524,19 @@ impl<'context> MessageRenderer<'context> {
 
         let end = std::time::Instant::now();
 
-        trace!("Rendered message. Took {}ns", (end - start).as_nanos());
+        trace!(time_taken = ?(end - start).as_nanos(), "Rendered message");
 
-        // This is either needed or not needed depending on what the last rendering step is
-        #[allow(clippy::useless_conversion)]
-        content.into()
+        content
     }
 
+    #[instrument(skip_all)]
     async fn get_nickname(&mut self, user: &User) -> Option<&str> {
         self.get_member_cached(&user.id)
             .await
             .and_then(|x| x.nick.as_deref())
     }
 
+    #[instrument(skip_all)]
     async fn get_highest_role_with_colour(
         &mut self,
         user: &User,

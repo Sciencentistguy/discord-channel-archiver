@@ -2,7 +2,6 @@ use crate::Result;
 
 use std::path::Path;
 
-use log::*;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::json;
@@ -10,6 +9,7 @@ use serenity::model::channel::Message;
 use serenity::model::channel::MessageType;
 use serenity::model::guild::PartialGuild;
 use serenity::prelude::Context;
+use tracing::*;
 
 #[derive(Serialize, Deserialize, Debug)]
 struct GuildJson<'a> {
@@ -57,13 +57,14 @@ struct MessageJson<'a> {
     timestamp_edited: Option<i64>,
 }
 
+#[instrument(skip_all)]
 pub async fn write_json<P: AsRef<Path>>(
     ctx: &Context,
     guild: &PartialGuild,
     messages: &[Message],
     path: P,
 ) -> Result<()> {
-    trace!("Entered json writer.");
+    trace!("Entered json writer");
     let channel = messages
         .first()
         .unwrap()
@@ -132,6 +133,6 @@ pub async fn write_json<P: AsRef<Path>>(
     let output = serde_json::to_string_pretty(&json)?;
     tokio::fs::write(path, output).await?;
     //serde_json::to_writer_pretty(file, &json)?;
-    info!("JSON generation complete.");
+    info!("JSON generation complete");
     Ok(())
 }
