@@ -17,6 +17,7 @@ use serenity::model::gateway::Ready;
 use serenity::model::guild::PartialGuild;
 use serenity::model::id::ChannelId;
 use serenity::model::interactions::application_command::ApplicationCommand;
+use serenity::model::interactions::application_command::ApplicationCommandInteraction;
 use serenity::model::interactions::application_command::ApplicationCommandInteractionDataOptionValue;
 use serenity::model::interactions::application_command::ApplicationCommandOptionType;
 use serenity::model::interactions::Interaction;
@@ -89,6 +90,189 @@ struct ArchiveLog {
     download_time: std::time::Duration,
     render_time: std::time::Duration,
     files_created: Vec<PathBuf>,
+}
+
+async fn handle_slash_command(
+    ctx: &Context,
+    command: &ApplicationCommandInteraction,
+) -> Result<String> {
+    match command.data.name.as_str() {
+        "archive_emoji" => {
+            // archive emoji
+            command
+                .create_interaction_response(&ctx, |reponse_builder| {
+                    reponse_builder.kind(InteractionResponseType::DeferredChannelMessageWithSource)
+                })
+                .await
+                .expect(REPLY_FAILURE);
+
+            match command.guild_id {
+                Some(guild_id) => {
+                    let guild = guild_id.to_partial_guild(&ctx).await?;
+                    let (n, output_path) = archive_emoji(guild).await;
+                    Ok(format!(
+                        "Archived {} emoji into `{}`",
+                        n,
+                        output_path.as_os_str().to_str().unwrap()
+                    ))
+                }
+                None => Err("This command must be used within a guild".to_owned().into()),
+            }
+        }
+        "archive" => {
+            // archive channel
+            command
+                .create_interaction_response(&ctx, |reponse_builder| {
+                    reponse_builder.kind(InteractionResponseType::DeferredChannelMessageWithSource)
+                })
+                .await
+                .expect(REPLY_FAILURE);
+
+            let channel = match command
+                .data
+                .options
+                .get(0)
+                .and_then(|o| o.resolved.as_ref())
+            {
+                Some(ApplicationCommandInteractionDataOptionValue::Channel(c)) => c,
+                _ => unreachable!("Expected channel as first argument"),
+            }
+            .id
+            .to_channel(&ctx)
+            .await?;
+
+            let mode = match command
+                .data
+                .options
+                .get(1)
+                .and_then(|o| o.resolved.as_ref())
+            {
+                Some(ApplicationCommandInteractionDataOptionValue::String(s)) => match s.as_str() {
+                    "json" => ArchivalMode::Json,
+                    "html" => ArchivalMode::Html,
+                    "all" => ArchivalMode::All,
+                    _ => unreachable!("Invalid string choice"),
+                },
+                _ => unreachable!("Expected format as second argument"),
+            };
+
+            match channel {
+                Channel::Guild(channel) => match command.guild_id {
+                    Some(guild_id) => {
+                        let guild = guild_id
+                            .to_partial_guild(&ctx)
+                            .await
+                            .expect("Failed to fetch guild");
+
+                        info!(
+                            user = %format!(
+                                "{}#{:04}",
+                                command.user.name,
+                                command.user.discriminator
+                                ),
+                            guild = %guild.name,
+                            channel = %channel.name,
+                            ?mode,
+                            "Archive requested"
+                        );
+
+                        Ok(archive(ctx, &channel, &guild, mode)
+                            .await
+                            .map(archive_response)?)
+                    }
+                    None => {
+                        error!("Command used outside of a guild channel");
+
+                        Err("This command must be used within a guild".to_owned().into())
+                    }
+                },
+                _ => {
+                    error!(?channel, "Channel is not a text channel");
+
+                    Err(
+                        "Error: Argument `channel` must be a text channel in this guild."
+                            .to_owned()
+                            .into(),
+                    )
+                }
+            }
+        }
+        _ => Err("Error: Invalid command".to_owned().into()),
+    }
+}
+
+async fn handle_archive_message(ctx: &Context, msg: &Message) -> Result<()> {
+    if msg.content == "!archive_emoji" {
+        let guild = msg
+            .guild_id
+            .ok_or_else(|| "This command must be used from within a guild".to_owned())?
+            .to_partial_guild(&ctx)
+            .await?;
+        let (n, output_path) = emoji::archive_emoji(guild).await;
+        msg.reply(
+            &ctx,
+            format!(
+                "Archived {} emoji into `{}`",
+                n,
+                output_path.as_os_str().to_str().unwrap()
+            ),
+        )
+        .await
+        .expect(REPLY_FAILURE);
+        return Ok(());
+    } else {
+        let capts = match COMMAND_REGEX.captures(&msg.content) {
+            Some(x) => x,
+            None => {
+                msg.reply(&ctx, USAGE_STRING).await.expect(REPLY_FAILURE);
+                return Err("Invalid archive command".to_owned().into());
+            }
+        };
+
+        let channel_id_str = &capts[1];
+        let mode = match capts.get(2).map(|x| x.as_str()) {
+            Some("json") => ArchivalMode::Json,
+            Some("html") => ArchivalMode::Html,
+            _ => ArchivalMode::All,
+        };
+        trace!(channel_id = %channel_id_str, ?mode, "Command parsed");
+
+        let channel = match ChannelId::from_str(channel_id_str) {
+            Ok(x) => x,
+            Err(e) => {
+                error!(channel_id = %channel_id_str, error = ?e, "Invalid channel id");
+                return Err(format!("Invalid channel id {}.", channel_id_str).into());
+            }
+        }
+        .to_channel(&ctx)
+        .await
+        .expect("Channel not found")
+        .guild()
+        .expect("Invalid channel type");
+
+        let guild = match msg.guild_id {
+            Some(guild_id) => guild_id.to_partial_guild(&ctx).await.unwrap(),
+            None => {
+                error!(?channel, "Channel is not a guild channel");
+                return Err("This bot must be used in a guild channel".to_owned().into());
+            }
+        };
+
+        info!(
+            user = %format!("{}#{:04}", msg.author.name, msg.author.discriminator),
+            guild = %guild.name,
+            channel = %channel.name,
+            ?mode,
+            "Archive requested"
+        );
+
+        let response = archive(ctx, &channel, &guild, mode)
+            .await
+            .map(archive_response)?;
+
+        msg.reply(&ctx, response).await.expect(REPLY_FAILURE);
+    }
+    Ok(())
 }
 
 #[instrument(skip_all)]
@@ -268,221 +452,33 @@ impl std::fmt::Display for ArchivalMode {
 impl EventHandler for Handler {
     async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
         if let Interaction::ApplicationCommand(command) = interaction {
-            let response = match command.data.name.as_str() {
-                "archive_emoji" => {
-                    // archive emoji
+            match handle_slash_command(&ctx, &command).await {
+                Ok(x) => {
                     command
-                        .create_interaction_response(&ctx, |reponse_builder| {
-                            reponse_builder
-                                .kind(InteractionResponseType::DeferredChannelMessageWithSource)
+                        .edit_original_interaction_response(&ctx, |builder| builder.content(x))
+                        .await
+                        .expect(REPLY_FAILURE);
+                }
+                Err(e) => {
+                    error!(error = ?e, "An error occurred in handle_slash_command()");
+                    command
+                        .edit_original_interaction_response(&ctx, |builder| {
+                            builder.content(format!("Error:\n```\n{:?}\n```", e))
                         })
                         .await
                         .expect(REPLY_FAILURE);
-                    match command.guild_id {
-                        Some(guild_id) => {
-                            let guild = guild_id.to_partial_guild(&ctx).await.unwrap();
-                            let (n, output_path) = archive_emoji(guild).await;
-                            format!(
-                                "Archived {} emoji into `{}`",
-                                n,
-                                output_path.as_os_str().to_str().unwrap()
-                            )
-                        }
-                        None => "This command must be used within a guild".to_owned(),
-                    }
                 }
-                "archive" => {
-                    // archive channel
-                    command
-                        .create_interaction_response(&ctx, |reponse_builder| {
-                            reponse_builder
-                                .kind(InteractionResponseType::DeferredChannelMessageWithSource)
-                        })
-                        .await
-                        .expect(REPLY_FAILURE);
-
-                    let channel = match command
-                        .data
-                        .options
-                        .get(0)
-                        .and_then(|o| o.resolved.as_ref())
-                    {
-                        Some(ApplicationCommandInteractionDataOptionValue::Channel(c)) => c,
-                        _ => unreachable!("Expected channel as first argument"),
-                    }
-                    .id
-                    .to_channel(&ctx)
-                    .await
-                    .expect("Failed to fetch channel");
-
-                    let mode = match command
-                        .data
-                        .options
-                        .get(1)
-                        .and_then(|o| o.resolved.as_ref())
-                    {
-                        Some(ApplicationCommandInteractionDataOptionValue::String(s)) => {
-                            match s.as_str() {
-                                "json" => ArchivalMode::Json,
-                                "html" => ArchivalMode::Html,
-                                "all" => ArchivalMode::All,
-                                _ => unreachable!("Invalid string choice"),
-                            }
-                        }
-                        _ => unreachable!("Expected format as second argument"),
-                    };
-
-                    match channel {
-                        Channel::Guild(channel) => match command.guild_id {
-                            Some(guild_id) => {
-                                let guild = guild_id
-                                    .to_partial_guild(&ctx)
-                                    .await
-                                    .expect("Failed to fetch guild");
-
-                                info!(
-                                    user = %format!(
-                                        "{}#{:04}",
-                                        command.user.name,
-                                        command.user.discriminator
-                                        ),
-                                    guild = %guild.name,
-                                    channel = %channel.name,
-                                    ?mode,
-                                    "Archive requested"
-                                );
-
-                                match archive(&ctx, &channel, &guild, mode).await {
-                                    Ok(archive_log) => archive_response(archive_log),
-                                    Err(e) => {
-                                        error!(error = ?e, "An error occurred in `archive()`");
-
-                                        format!(
-                                            "An error has occurred!\n\
-                                            ```\n\
-                                            {}\n\
-                                            ```",
-                                            e
-                                        )
-                                    }
-                                }
-                            }
-                            None => {
-                                error!("Command used outside of a guild channel");
-
-                                "This command must be used within a guild".to_owned()
-                            }
-                        },
-                        _ => {
-                            error!(?channel, "Channel is not a text channel");
-
-                            "Error: Argument `channel` must be a text channel in this guild."
-                                .to_owned()
-                        }
-                    }
-                }
-                _ => "Error: Invalid command".to_owned(),
-            };
-
-            command
-                .edit_original_interaction_response(&ctx, |edit_response_builder| {
-                    edit_response_builder.content(response)
-                })
-                .await
-                .expect(REPLY_FAILURE);
+            }
         }
     }
 
     async fn message(&self, ctx: Context, msg: Message) {
         if msg.content.starts_with("!archive") {
-            if msg.content == "!archive_emoji" {
-                let guild = match msg.guild_id {
-                    Some(guild_id) => guild_id.to_partial_guild(&ctx).await.unwrap(),
-                    None => {
-                        msg.reply(&ctx, "This command must be used within a guild")
-                            .await
-                            .expect(REPLY_FAILURE);
-                        return;
-                    }
-                };
-                let (n, output_path) = emoji::archive_emoji(guild).await;
-                msg.reply(
-                    &ctx,
-                    format!(
-                        "Archived {} emoji into `{}`",
-                        n,
-                        output_path.as_os_str().to_str().unwrap()
-                    ),
-                )
-                .await
-                .expect(REPLY_FAILURE);
-                return;
-            } else {
-                let capts = COMMAND_REGEX.captures(&msg.content);
-                if capts.as_ref().and_then(|x| x.get(0)).is_none() {
-                    msg.reply(&ctx, USAGE_STRING).await.expect(REPLY_FAILURE);
-                    info!(command = %msg.content, "Invalid archive command");
-                    return;
-                }
-                let capts = capts.unwrap();
-                let channel_id_str = &capts[1];
-                let mode = match capts.get(2).map(|x| x.as_str()) {
-                    Some("json") => ArchivalMode::Json,
-                    Some("html") => ArchivalMode::Html,
-                    _ => ArchivalMode::All,
-                };
-                trace!(channel_id = %channel_id_str, ?mode, "Command parsed");
-
-                let channel = match ChannelId::from_str(channel_id_str) {
-                    Ok(x) => x,
-                    Err(_) => {
-                        error!(channel_id = %channel_id_str, "Invalid channel id");
-                        msg.reply(&ctx, format!("Invalid channel id {}.", channel_id_str))
-                            .await
-                            .expect(REPLY_FAILURE);
-                        return;
-                    }
-                }
-                .to_channel(&ctx)
-                .await
-                .expect("Channel not found")
-                .guild()
-                .expect("Invalid channel type");
-
-                let guild = match msg.guild_id {
-                    Some(guild_id) => guild_id.to_partial_guild(&ctx).await.unwrap(),
-                    None => {
-                        error!(?channel, "Channel is not a guild channel");
-                        msg.reply(&ctx, "This bot must be used in a guild channel.")
-                            .await
-                            .expect(REPLY_FAILURE);
-                        return;
-                    }
-                };
-
-                info!(
-                    user = %format!("{}#{:04}", msg.author.name, msg.author.discriminator),
-                    guild = %guild.name,
-                    channel = %channel.name,
-                    ?mode,
-                    "Archive requested"
-                );
-
-                let response = match archive(&ctx, &channel, &guild, mode).await {
-                    Ok(archive_log) => archive_response(archive_log),
-                    Err(e) => {
-                        error!(error = ?e, "An error occurred in archive()");
-                        format!(
-                            "An error has occurred!\n\
-                            ```\n\
-                            {}\n\
-                            ```",
-                            e
-                        )
-                    }
-                };
-
-                msg.reply(&ctx, response).await.expect(REPLY_FAILURE);
+            if let Err(e) = handle_archive_message(&ctx, &msg).await {
+                error!(error = ?e, "An error occurred in handle_archive_message()");
+                msg.reply(&ctx, format!("Error:\n```\n{:?}\n```", e))
+                    .await
+                    .expect(REPLY_FAILURE);
             }
         }
     }

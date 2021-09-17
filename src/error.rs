@@ -16,4 +16,13 @@ pub enum Error {
 
     #[error("Reqwest error: {0}")]
     Reqwest(#[from] reqwest::Error),
+
+    #[error("{0}")]
+    Custom(String),
+}
+
+impl From<String> for Error {
+    fn from(s: String) -> Self {
+        Self::Custom(s)
+    }
 }
