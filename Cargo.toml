@@ -8,7 +8,7 @@ edition = "2018"
 
 [dependencies]
 chrono = "0.4.19"
-futures = "0.3.18"
+futures = "0.3.19"
 gh-emoji = "1.0.6"
 regex = "1.5.4"
 reqwest = "0.11.7"
