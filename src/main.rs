@@ -7,8 +7,6 @@ mod json;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use once_cell::sync::Lazy;
-use regex::Regex;
 use serenity::async_trait;
 use serenity::model::channel::Channel;
 use serenity::model::channel::GuildChannel;
@@ -23,7 +21,10 @@ use serenity::model::interactions::application_command::ApplicationCommandOption
 use serenity::model::interactions::Interaction;
 use serenity::model::interactions::InteractionResponseType;
 use serenity::prelude::*;
-use structopt::StructOpt;
+
+use clap::Parser;
+use once_cell::sync::Lazy;
+use regex::Regex;
 use tracing::*;
 
 use crate::emoji::archive_emoji;
@@ -41,7 +42,7 @@ const REPLY_FAILURE: &str = "Failed to reply to message";
 static COMMAND_REGEX: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^!archive +<#(\d+)> *([\w,]+)?$").unwrap());
 
-static OPTIONS: Lazy<Opt> = Lazy::new(Opt::from_args);
+static OPTIONS: Lazy<Opt> = Lazy::new(Opt::parse);
 
 #[tokio::main]
 async fn main() {
@@ -529,17 +530,13 @@ impl EventHandler for Handler {
     }
 }
 
-#[derive(StructOpt, Debug)]
-#[structopt(
-    name = "discord-channel-archiver",
-    about = "A small discord bot to archive the messages in a discord text channel. Provide the token with either --token, --token-filename, or as the environment variable DISCORD_TOKEN, in order of decreasing priority."
-)]
+/// A small discord bot to archive the messages in a discord text channel. Provide the token with either --token, --token-filename, or as the environment variable DISCORD_TOKEN, in order of decreasing priority.
+#[derive(Parser, Debug)]
+#[clap(name = "discord-channel-archiver", version, author, about)]
 struct Opt {
     /// File containing the token
-    #[structopt()]
     token_filename: PathBuf,
     /// File containing the application id
-    #[structopt()]
     appid_filename: PathBuf,
     /// The path to output files to
     #[structopt(default_value = "/dev/shm/")]
