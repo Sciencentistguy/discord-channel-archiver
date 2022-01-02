@@ -269,7 +269,6 @@ dependencies = [
  "chrono",
  "clap",
  "futures",
- "gh-emoji",
  "liquid",
  "once_cell",
  "regex",
@@ -277,7 +276,6 @@ dependencies = [
  "serde",
  "serde_json",
  "serenity",
- "text_io",
  "thiserror",
  "tokio",
  "tracing",
@@ -482,16 +480,6 @@ dependencies = [
  "cfg-if",
  "libc",
  "wasi 0.10.0+wasi-snapshot-preview1",
-]
-
-[[package]]
-name = "gh-emoji"
-version = "1.0.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6af39cf9a679d7195b3370f5454381ba49c4791bc7ce3ae2a7bf1a2a89c7adf"
-dependencies = [
- "phf",
- "regex",
 ]
 
 [[package]]
@@ -1001,24 +989,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "phf"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b9fc3db1018c4b59d7d582a739436478b6035138b6aecbce989fc91c3e98409f"
-dependencies = [
- "phf_shared",
-]
-
-[[package]]
-name = "phf_shared"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6796ad771acdc0123d2a88dc428b5e38ef24456743ddb1744ed628f9815c096"
-dependencies = [
- "siphasher",
-]
-
-[[package]]
 name = "pin-project"
 version = "1.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1502,12 +1472,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "siphasher"
-version = "0.3.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "533494a8f9b724d33625ab53c6c4800f7cc445895924a8ef649222dcb76e938b"
-
-[[package]]
 name = "slab"
 version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1574,12 +1538,6 @@ checksum = "2dfed899f0eb03f32ee8c6a0aabdb8a7949659e3466561fc0adf54e26d88c5f4"
 dependencies = [
  "winapi-util",
 ]
-
-[[package]]
-name = "text_io"
-version = "0.1.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ee74b5019b48991b09803402aaf9e65a053b3993fe9d9c475ab67a395358ba76"
 
 [[package]]
 name = "textwrap"

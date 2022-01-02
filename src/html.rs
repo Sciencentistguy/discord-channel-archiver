@@ -2,6 +2,7 @@ use crate::Result;
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::time::Instant;
 
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -23,7 +24,7 @@ const PREAMBLE_TEMPLATE: &str = include_str!("html_templates/preamble_template.l
 const POSTAMBLE_TEMPLATE: &str = include_str!("html_templates/postamble_template.liquid");
 const MESSAGE_GROUP_TEMPLATE: &str = include_str!("html_templates/message_group.liquid");
 
-const IMAGE_FILE_EXTS: [&str; 7] = [".jpg", ".jpeg", ".JPG", ".JPEG", ".png", ".PNG", ".gif"];
+const IMAGE_FILE_EXTS: &[&str] = &[".jpg", ".jpeg", ".JPG", ".JPEG", ".png", ".PNG", ".gif"];
 const USE_DARK_MODE: bool = true;
 
 static CUSTOM_EMOJI_REGEX: Lazy<Regex> =
@@ -81,10 +82,10 @@ pub async fn write_html<P: AsRef<Path>>(
         "channel_name": &channel.name,
         "core_css": CORE_THEME_CSS,
         "theme_css": if USE_DARK_MODE {DARK_THEME_CSS} else {LIGHT_THEME_CSS},
-        "guild_icon_url": guild.icon_url().unwrap_or_else(String::new),
+        "guild_icon_url": guild.icon_url().unwrap_or_default(),
         "guild_icon_alt": get_acronym_from_str(guild.name.as_str()),
-        "category_name": category_name.unwrap_or_else(String::new),
-        "channel_topic": channel.topic.as_deref().unwrap_or(""),
+        "category_name": category_name.unwrap_or_default(),
+        "channel_topic": channel.topic.as_deref().unwrap_or_default(),
     });
 
     let mut html = preamble_template.render(&liquid_objects)?;
@@ -246,10 +247,10 @@ impl<'context> MessageRenderer<'context> {
     }
 
     #[instrument(skip_all)]
-    async fn render_message(&mut self, message: &serenity::model::channel::Message) -> String {
+    async fn render_message(&mut self, message: &Message) -> String {
         let content = message.content.as_str();
         trace!(%content, "Rendering message");
-        let start = std::time::Instant::now();
+        let start = Instant::now();
 
         // Ampersands break things
         let content = content.replace('&', "&amp;");
@@ -522,7 +523,7 @@ impl<'context> MessageRenderer<'context> {
             }
         }
 
-        let end = std::time::Instant::now();
+        let end = Instant::now();
 
         trace!(time_taken = ?(end - start).as_nanos(), "Rendered message");
 

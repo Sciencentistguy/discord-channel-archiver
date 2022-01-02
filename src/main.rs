@@ -6,6 +6,7 @@ mod json;
 
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::time::Instant;
 
 use serenity::async_trait;
 use serenity::model::channel::Channel;
@@ -50,8 +51,6 @@ async fn main() {
         .pretty()
         .with_max_level(Level::INFO)
         .init();
-
-    //pretty_env_logger::init();
 
     let token = tokio::fs::read_to_string(&OPTIONS.token_filename)
         .await
@@ -284,7 +283,7 @@ async fn archive(
     output_mode: ArchivalMode,
 ) -> Result<ArchiveLog> {
     trace!("Begin downloading messages");
-    let start = std::time::Instant::now();
+    let start = Instant::now();
 
     // Download messages
     let messages = {
@@ -331,7 +330,7 @@ async fn archive(
         }
     };
 
-    let end = std::time::Instant::now();
+    let end = Instant::now();
     let download_time = end - start;
 
     info!(
@@ -349,7 +348,7 @@ async fn archive(
     let mut files_created = Vec::new();
 
     // XXX This is a litte ugly.
-    let start = std::time::Instant::now();
+    let start = Instant::now();
     match output_mode {
         ArchivalMode::Json => {
             let output_path = OPTIONS
@@ -379,7 +378,7 @@ async fn archive(
             files_created.push(output_path);
         }
     }
-    let end = std::time::Instant::now();
+    let end = Instant::now();
     let render_time = end - start;
 
     info!(time_taken = ?(download_time + render_time), "Archive complete");
@@ -539,6 +538,6 @@ struct Opt {
     /// File containing the application id
     appid_filename: PathBuf,
     /// The path to output files to
-    #[structopt(default_value = "/dev/shm/")]
+    #[clap(default_value = "/dev/shm/")]
     output_path: PathBuf,
 }

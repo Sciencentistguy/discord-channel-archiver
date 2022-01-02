@@ -6,6 +6,7 @@ use std::file;
 use crate::file;
 use crate::OPTIONS;
 
+use chrono::Utc;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use serenity::model::guild::PartialGuild;
@@ -17,7 +18,7 @@ pub async fn archive_emoji(guild: PartialGuild) -> (usize, PathBuf) {
     let output_directory = OPTIONS.output_path.join(format!(
         "{}-{}",
         guild.name.replace(' ', "-").to_lowercase(),
-        chrono::Utc::now().format("%Y-%m-%dT%H-%M-%S")
+        Utc::now().format("%Y-%m-%dT%H-%M-%S")
     ));
 
     let n = guild.emojis.len();
