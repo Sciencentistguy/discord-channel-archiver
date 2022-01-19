@@ -538,6 +538,5 @@ struct Opt {
     /// File containing the application id
     appid_filename: PathBuf,
     /// The path to output files to
-    #[clap(default_value = "/dev/shm/")]
     output_path: PathBuf,
 }
