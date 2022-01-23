@@ -24,7 +24,7 @@ tracing-subscriber = "0.3.6"
 [dependencies.serenity]
 default-features=false
 features=["client", "gateway", "rustls_backend", "model", "cache", "unstable_discord_api"]
-version = "0.10.9"
+version = "0.10.10"
 
 [profile.release]
 debug = true
