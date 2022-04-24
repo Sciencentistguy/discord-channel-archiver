@@ -72,7 +72,7 @@ pub async fn write_html<P: AsRef<Path>>(
     let postamble_template = liquid_parser.parse(POSTAMBLE_TEMPLATE)?;
     let message_group_template = liquid_parser.parse(MESSAGE_GROUP_TEMPLATE)?;
 
-    let category_name = match channel.category_id {
+    let category_name = match channel.parent_id {
         Some(x) => x.name(&ctx).await,
         None => None,
     };

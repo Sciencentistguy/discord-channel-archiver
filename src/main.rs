@@ -66,10 +66,12 @@ async fn main() {
 
     tokio::spawn(async { html::prebuild_regexes() });
 
+    let intents = GatewayIntents::all();
+
     // Create a new instance of the Client, logging in as a bot. This will
     // automatically prepend your bot token with "Bot ", which is a requirement
     // by Discord for bot users.
-    let mut client = Client::builder(&token)
+    let mut client = Client::builder(&token, intents)
         .event_handler(Handler)
         .application_id(application_id)
         .await
