@@ -9,11 +9,11 @@ A discord bot to archive the messages in a discord text channel.
 - [Invite](https://discordpy.readthedocs.io/en/latest/discord.html#inviting-your-bot) the bot to your server. Make sure to select the `application.commands` scope if you want to use slash commands.
 - Run the bot, providing the token and application id as command line arguments:
   - With nix:
-    - `nix run github:Sciencentistguy/discord-channel-archiver -- <token_filename> <application_id_filename>`
+    - `nix run github:Sciencentistguy/discord-channel-archiver -- <token_filename> <application_id_filename> [output_directory]`
   - With cargo:
-    - `cargo run -- <token_filename> <application_id_filename>`
+    - `cargo run -- <token_filename> <application_id_filename> [output_directory]`
   - Standalone:
-    - `discord-channel-archiver <token_filename> <application_id_filename>`
+    - `discord-channel-archiver <token_filename> <application_id_filename> [output_directory]`
 - The commands `/archive` and `/archive_emoji` should be available in your guilds.
 - Alternatively, send a message of the form:
   - `!archive <channel> [mode]`, where `channel` is the channel you want to archive, and `mode` is one of either `json` or `html`. If this is blank, or if is any other value, all output formats will be generated.

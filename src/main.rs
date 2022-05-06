@@ -531,7 +531,7 @@ impl EventHandler for Handler {
     }
 }
 
-/// A small discord bot to archive the messages in a discord text channel. Provide the token with either --token, --token-filename, or as the environment variable DISCORD_TOKEN, in order of decreasing priority.
+/// A small discord bot to archive the messages in a discord text channel.
 #[derive(Parser, Debug)]
 #[clap(name = "discord-channel-archiver", version, author, about)]
 struct Opt {
@@ -540,5 +540,6 @@ struct Opt {
     /// File containing the application id
     appid_filename: PathBuf,
     /// The path to output files to
+    #[clap(default_value = "/dev/shm")]
     output_path: PathBuf,
 }
