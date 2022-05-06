@@ -36,6 +36,13 @@
           ];
           buildInputs = with pkgs; [openssl];
           RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
+
+          meta = with lib; {
+            description = "A small discord bot to archive the messages in a discord text channel.";
+            license = licenses.gpl3Only;
+            homepage = "https://github.com/Sciencentistguy/discord-channel-archiver";
+            platforms = platforms.all;
+          };
         };
       }
     );
