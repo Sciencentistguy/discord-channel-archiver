@@ -8,6 +8,7 @@ use serde_json::json;
 use serenity::model::channel::Message;
 use serenity::model::channel::MessageType;
 use serenity::model::guild::PartialGuild;
+use serenity::model::Timestamp;
 use serenity::prelude::Context;
 use tracing::*;
 
@@ -53,8 +54,8 @@ struct MessageJson<'a> {
     is_pinned: bool,
     kind: MessageType,
     message_url: String,
-    timestamp: i64,
-    timestamp_edited: Option<i64>,
+    timestamp: Timestamp,
+    timestamp_edited: Option<Timestamp>,
 }
 
 #[instrument(skip_all)]
@@ -82,7 +83,7 @@ pub async fn write_json<P: AsRef<Path>>(
 
     let channel_json = ChannelJson {
         id: channel.id.0,
-        category: match channel.category_id {
+        category: match channel.parent_id {
             Some(x) => x.name(&ctx).await,
             None => None,
         },
@@ -118,8 +119,8 @@ pub async fn write_json<P: AsRef<Path>>(
                 is_pinned: message.pinned,
                 kind: message.kind,
                 message_url: message.link(),
-                timestamp: message.timestamp.timestamp(),
-                timestamp_edited: message.edited_timestamp.map(|x| x.timestamp()),
+                timestamp: message.timestamp,
+                timestamp_edited: message.edited_timestamp,
             }
         })
         .collect();
