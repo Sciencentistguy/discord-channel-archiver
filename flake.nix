@@ -23,27 +23,41 @@
       system: let
         pkgs = nixpkgs.legacyPackages.${system};
         inherit (pkgs) lib;
-      in {
-        packages.default = pkgs.rustPlatform.buildRustPackage {
-          name = "discord-channel-archiver";
-          src = lib.cleanSource ./.;
-          cargoLock.lockFile = ./Cargo.lock;
-          nativeBuildInputs = with pkgs; [
-            pkg-config
-            rustPlatform.bindgenHook
-            clippy
-            rustfmt
-          ];
-          buildInputs = with pkgs; [openssl];
-          RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
+        pkg = {
+          rustPlatform,
+          pkg-config,
+          openssl,
+          lib,
+        }:
+          rustPlatform.buildRustPackage {
+            name = "discord-channel-archiver";
+            src = lib.cleanSource ./.;
+            cargoLock.lockFile = ./Cargo.lock;
+            nativeBuildInputs = [
+              pkg-config
+              rustPlatform.bindgenHook
+            ];
+            buildInputs = [openssl];
 
-          meta = with lib; {
-            description = "A small discord bot to archive the messages in a discord text channel.";
-            license = licenses.gpl3Only;
-            homepage = "https://github.com/Sciencentistguy/discord-channel-archiver";
-            platforms = platforms.all;
+            meta = with lib; {
+              description = "A small discord bot to archive the messages in a discord text channel.";
+              license = licenses.gpl3Only;
+              homepage = "https://github.com/Sciencentistguy/discord-channel-archiver";
+              platforms = platforms.all;
+            };
           };
-        };
+      in {
+        packages.default = pkgs.callPackage pkg {};
+        devShells.default = self.packages.${system}.default.overrideAttrs (super: {
+          nativeBuildInputs = with pkgs;
+            super.nativeBuildInputs
+            ++ [
+              cargo-edit
+              clippy
+              rustfmt
+            ];
+          RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
+        });
       }
     );
 }
