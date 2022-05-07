@@ -9,11 +9,11 @@ use crate::OPTIONS;
 use chrono::Utc;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
-use serenity::model::guild::PartialGuild;
+use serenity::model::guild::Guild;
 use tracing::*;
 
 #[instrument(skip_all)]
-pub async fn archive_emoji(guild: PartialGuild) -> (usize, PathBuf) {
+pub async fn archive_emoji(guild: Guild) -> (usize, PathBuf) {
     info!("Starting emoji archive");
     let output_directory = OPTIONS.output_path.join(format!(
         "{}-{}",
@@ -37,7 +37,6 @@ pub async fn archive_emoji(guild: PartialGuild) -> (usize, PathBuf) {
         })
         .collect();
 
-    #[allow(clippy::redundant_pattern_matching)]
     while let Some(x) = fut.next().await {
         if let Err(e) = x {
             error!(error = ?e, "Failed to download an emoji");

@@ -8,8 +8,8 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use serenity::model::channel::GuildChannel;
 use serenity::model::channel::Message;
+use serenity::model::guild::Guild;
 use serenity::model::guild::Member;
-use serenity::model::guild::PartialGuild;
 use serenity::model::guild::Role;
 use serenity::model::id::ChannelId;
 use serenity::model::id::UserId;
@@ -60,7 +60,7 @@ pub fn prebuild_regexes() {
 #[instrument(skip_all)]
 pub async fn write_html<P: AsRef<Path>>(
     ctx: &Context,
-    guild: &PartialGuild,
+    guild: &Guild,
     channel: &GuildChannel,
     messages: &[Message],
     path: P,
@@ -150,7 +150,7 @@ struct MessageRenderer<'context> {
     channel_names: HashMap<u64, String>,
     members: HashMap<UserId, Option<Member>>,
     usernames: HashMap<UserId, Option<String>>,
-    guild: &'context PartialGuild,
+    guild: &'context Guild,
     ctx: &'context Context,
 }
 
@@ -158,7 +158,7 @@ impl<'context> MessageRenderer<'context> {
     #[instrument(skip_all)]
     async fn new(
         ctx: &'context Context,
-        guild: &'context PartialGuild,
+        guild: &'context Guild,
         channels: HashMap<ChannelId, GuildChannel>,
     ) -> MessageRenderer<'context> {
         trace!("Begin getting channel names");
@@ -371,7 +371,7 @@ impl<'context> MessageRenderer<'context> {
                                 &block,
                                 |capts: &regex::Captures| {
                                     if &capts[1] == r"\" {
-                                        return capts[0][1..capts[0].len()].replace(":", "&#58;");
+                                        return capts[0][1..capts[0].len()].replace(':', "&#58;");
                                     }
                                     let animated = &capts[2] == "a";
                                     let name = &capts[3];
@@ -541,7 +541,7 @@ impl<'context> MessageRenderer<'context> {
     async fn get_highest_role_with_colour(
         &mut self,
         user: &User,
-        guild: &'context PartialGuild,
+        guild: &'context Guild,
     ) -> Option<&'context Role> {
         let member = self.get_member_cached(&user.id).await?;
 
@@ -558,10 +558,7 @@ impl<'context> MessageRenderer<'context> {
 
 #[inline]
 fn get_member_nick(member: &Member) -> &str {
-    member
-        .nick
-        .as_deref()
-        .unwrap_or_else(|| member.user.name.as_str())
+    member.nick.as_deref().unwrap_or(member.user.name.as_str())
 }
 
 fn get_acronym_from_str(string: &str) -> String {

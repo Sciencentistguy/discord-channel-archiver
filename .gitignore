@@ -1,6 +1,6 @@
 /target
-token
-appid
+tokenfile
+appidfile
 test*
 log.txt
 .idea

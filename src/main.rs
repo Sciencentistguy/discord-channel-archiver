@@ -13,7 +13,7 @@ use serenity::model::channel::Channel;
 use serenity::model::channel::GuildChannel;
 use serenity::model::channel::Message;
 use serenity::model::gateway::Ready;
-use serenity::model::guild::PartialGuild;
+use serenity::model::guild::Guild;
 use serenity::model::id::ChannelId;
 use serenity::model::interactions::application_command::ApplicationCommand;
 use serenity::model::interactions::application_command::ApplicationCommandInteraction;
@@ -110,7 +110,9 @@ async fn handle_slash_command(
 
             match command.guild_id {
                 Some(guild_id) => {
-                    let guild = guild_id.to_partial_guild(&ctx).await?;
+                    let guild = guild_id
+                        .to_guild_cached(&ctx)
+                        .ok_or_else(|| "Guild not found in cache".to_owned())?;
                     let (n, output_path) = archive_emoji(guild).await;
                     Ok(format!(
                         "Archived {} emoji into `{}`",
@@ -162,8 +164,8 @@ async fn handle_slash_command(
                 Channel::Guild(channel) => match command.guild_id {
                     Some(guild_id) => {
                         let guild = guild_id
-                            .to_partial_guild(&ctx)
-                            .await
+                            .to_guild_cached(&ctx)
+                            // .to_partial_guild(&ctx)
                             .expect("Failed to fetch guild");
 
                         info!(
@@ -208,8 +210,8 @@ async fn handle_archive_message(ctx: &Context, msg: &Message) -> Result<()> {
         let guild = msg
             .guild_id
             .ok_or_else(|| "This command must be used from within a guild".to_owned())?
-            .to_partial_guild(&ctx)
-            .await?;
+            .to_guild_cached(&ctx)
+            .ok_or_else(|| "Guild not found in cache".to_owned())?;
         let (n, output_path) = emoji::archive_emoji(guild).await;
         msg.reply(
             &ctx,
@@ -253,7 +255,7 @@ async fn handle_archive_message(ctx: &Context, msg: &Message) -> Result<()> {
         .expect("Invalid channel type");
 
         let guild = match msg.guild_id {
-            Some(guild_id) => guild_id.to_partial_guild(&ctx).await.unwrap(),
+            Some(guild_id) => guild_id.to_guild_cached(&ctx).unwrap(),
             None => {
                 error!(?channel, "Channel is not a guild channel");
                 return Err("This bot must be used in a guild channel".to_owned().into());
@@ -281,7 +283,7 @@ async fn handle_archive_message(ctx: &Context, msg: &Message) -> Result<()> {
 async fn archive(
     ctx: &Context,
     channel: &GuildChannel,
-    guild: &PartialGuild,
+    guild: &Guild,
     output_mode: ArchivalMode,
 ) -> Result<ArchiveLog> {
     trace!("Begin downloading messages");
@@ -297,6 +299,9 @@ async fn archive(
         let mut messages = channel
             .messages(&ctx, |r| r.limit(MESSAGE_DOWNLOAD_LIMIT))
             .await?;
+        // let mut messages = channel
+        // .messages(&ctx, |r| r.limit(MESSAGE_DOWNLOAD_LIMIT))
+        // .await?;
 
         trace!(download_count = %messages.len());
 
