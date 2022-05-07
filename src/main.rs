@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::Instant;
 
+use indoc::indoc;
 use serenity::async_trait;
 use serenity::model::channel::Channel;
 use serenity::model::channel::GuildChannel;
@@ -32,11 +33,13 @@ use crate::emoji::archive_emoji;
 
 type Result<T> = std::result::Result<T, error::Error>;
 
-const USAGE_STRING: &str = "Invalid syntax.\n\
-                            Correct usage is `!archive <channel> [mode]`, \
-                            where `channel` is the channel you want to archive, and `mode` \
-                            is one of either `json` or `html`. If this is blank, or if is \
-                            any other value, all output formats will be generated.";
+const USAGE_STRING: &str = indoc! { "
+    Invalid syntax.
+    Correct usage is `!archive <channel> [mode]`, \
+    where `channel` is the channel you want to archive, and `mode` \
+    is one of either `json` or `html`. If this is blank, or if is \
+    any other value, all output formats will be generated."
+};
 
 const REPLY_FAILURE: &str = "Failed to reply to message";
 
@@ -423,13 +426,15 @@ fn archive_response(
         format!("{}ms", render_time.as_millis())
     };
     format!(
-        "Archival complete!\
-        Downloading messages took {}.\n\
-        Rendering output took {}.\n\
-        Created the following files:\n\
-        ```\n\
-        {}\n\
-        ```",
+        indoc! { "
+            Archival complete!
+            Downloading messages took {}.
+            Rendering output took {}.
+            Created the following files:
+            ```
+            {}
+            ```"
+        },
         download_time,
         render_time,
         files_created

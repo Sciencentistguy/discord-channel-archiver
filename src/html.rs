@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::time::Instant;
 
+use indoc::indoc;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serenity::model::channel::GuildChannel;
@@ -311,16 +312,17 @@ impl<'context> MessageRenderer<'context> {
                                 {
                                     trace!("URL is an image embed");
                                     return format!(
-                                        r#"<span class="chatlog__embed-image-container">
-                                        <a href="{0:}" target="_blank">
-                                        <img 
-                                            class="chatlog__embed-image"
-                                            title="{0:}"
-                                            src="{0:}"
-                                            alt="{0:}"
-                                        />
-                                        </a>
-                                        </span><br>"#,
+                                        indoc! { r#"
+                                        <span class="chatlog__embed-image-container">
+                                            <a href="{0:}" target="_blank">
+                                                <img 
+                                                    class="chatlog__embed-image"
+                                                    title="{0:}"
+                                                    src="{0:}"
+                                                    alt="{0:}"
+                                                />
+                                            </a>
+                                        </span><br>"#},
                                         m.as_str()
                                     );
                                 }
@@ -386,12 +388,14 @@ impl<'context> MessageRenderer<'context> {
                                         }
                                     };
                                     format!(
-                                        r#"<img
-                                           class="emoji"
-                                           src="{0:}"
-                                           alt="{1:}"
-                                           title="{1:}"
-                                           />"#,
+                                        indoc! { r#"
+                                           <img
+                                               class="emoji"
+                                               src="{0:}"
+                                               alt="{1:}"
+                                               title="{1:}"
+                                           />"#
+                                        },
                                         url, &capts[1]
                                     )
                                 },
@@ -510,11 +514,18 @@ impl<'context> MessageRenderer<'context> {
                 trace!(url = %attachment.url, "Found message attachment");
                 if IMAGE_FILE_EXTS.iter().any(|x| attachment.url.ends_with(x)) {
                     content.push_str(&format!(
-                        r#"<span class="chatlog__embed-image-container">
-                        <a href="{0:}" target="_blank">
-                        <img class="chatlog__embed-image" title="{0:}", src="{0:}" alt="{0:}"/>
-                        </a>
-                        </span><br>"#,
+                        indoc! { r#"
+                        <span class="chatlog__embed-image-container">
+                            <a href="{0:}" target="_blank">
+                                <img  
+                                    class="chatlog__embed-image"
+                                    title="{0:}"
+                                    src="{0:}"
+                                    alt="{0:}"
+                                />
+                            </a>
+                        </span><br>"#
+                        },
                         attachment.url
                     ));
                 } else {
