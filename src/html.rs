@@ -1,5 +1,6 @@
 use crate::Result;
 
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::path::Path;
 use std::time::Instant;
@@ -186,16 +187,9 @@ impl<'context> MessageRenderer<'context> {
 
     #[instrument(skip_all)]
     async fn get_username_cached(&mut self, user_id: &UserId) -> Option<&str> {
-        if let Some(m) = self.usernames.get(user_id) {
-            // It is more obvious that this is safe with a match
-            #[allow(clippy::manual_map)]
-            match m {
-                // SAFETY: These two borrows *are* mutually exclusive, and therefore tricking the
-                // borrow checker here is fine.
-                Some(x) => Some(unsafe { (*(x as *const String)).as_str() }),
-                None => None,
-            }
-        } else {
+        let entry = self.usernames.entry(*user_id);
+        let mut val = None;
+        if matches!(entry, Entry::Vacant(_)) {
             match self
                 .ctx
                 .http
@@ -203,48 +197,28 @@ impl<'context> MessageRenderer<'context> {
                 .await
                 .map(|x| x.name)
             {
-                Ok(x) => {
-                    self.usernames.insert(*user_id, Some(x));
-                    self.usernames.get(user_id).and_then(Option::as_deref)
-                }
-                Err(e) => {
-                    warn!(
-                        ?user_id,
-                        error = ?e,
-                        "User id is not associated with a user",
-                    );
-                    self.usernames.insert(*user_id, None);
-                    None
+                Ok(x) => val = Some(x),
+                Err(error) => {
+                    warn!(?user_id, ?error, "User id is not associated with a user",);
                 }
             }
         }
+        entry.or_insert(val).as_deref()
     }
 
     #[instrument(skip_all)]
     async fn get_member_cached(&mut self, user_id: &UserId) -> Option<&Member> {
-        match self.members.get(user_id) {
-            Some(member) => {
-                // It is more obvious that this is safe with a match
-                #[allow(clippy::manual_map)]
-                match member {
-                    // SAFETY: These two borrows *are* mutually exclusive, and therefore tricking the
-                    // borrow checker here is fine.
-                    Some(x) => Some(unsafe { &*(x as *const _) }),
-                    None => None,
+        let entry = self.members.entry(*user_id);
+        let mut val = None;
+        if matches!(entry, Entry::Vacant(_)) {
+            match self.guild.member(&self.ctx, user_id).await {
+                Ok(x) => val = Some(x),
+                Err(error) => {
+                    warn!(?user_id, ?error, "User id not found in channel",);
                 }
             }
-            None => match self.guild.member(&self.ctx, user_id).await {
-                Ok(x) => {
-                    self.members.insert(*user_id, Some(x));
-                    self.members.get(user_id).and_then(Option::as_ref)
-                }
-                Err(_) => {
-                    warn!(%user_id, "User id not found in channel");
-                    self.members.insert(*user_id, None);
-                    None
-                }
-            },
         }
+        entry.or_insert(val).as_ref()
     }
 
     #[instrument(skip_all)]
