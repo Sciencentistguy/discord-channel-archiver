@@ -27,6 +27,7 @@ use serenity::model::interactions::Interaction;
 use serenity::model::interactions::InteractionResponseType;
 use serenity::prelude::*;
 use tracing::*;
+use tracing_subscriber::EnvFilter;
 
 use crate::emoji::archive_emoji;
 
@@ -51,12 +52,14 @@ static OPTIONS: Lazy<Opt> = Lazy::new(Opt::parse);
 async fn main() {
     tracing_subscriber::fmt()
         .pretty()
-        .with_max_level(Level::INFO)
+        .with_env_filter(EnvFilter::from_default_env())
         .init();
 
     let token = tokio::fs::read_to_string(&OPTIONS.token_filename)
         .await
         .expect("File does not exist");
+    let token = token.trim();
+
     let application_id = tokio::fs::read_to_string(&OPTIONS.appid_filename)
         .await
         .expect("File does not exist")
