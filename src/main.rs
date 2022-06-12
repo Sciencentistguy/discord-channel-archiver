@@ -8,7 +8,10 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::Instant;
 
+use clap::Parser;
 use indoc::indoc;
+use once_cell::sync::Lazy;
+use regex::Regex;
 use serenity::async_trait;
 use serenity::model::channel::Channel;
 use serenity::model::channel::GuildChannel;
@@ -23,10 +26,6 @@ use serenity::model::interactions::application_command::ApplicationCommandOption
 use serenity::model::interactions::Interaction;
 use serenity::model::interactions::InteractionResponseType;
 use serenity::prelude::*;
-
-use clap::Parser;
-use once_cell::sync::Lazy;
-use regex::Regex;
 use tracing::*;
 
 use crate::emoji::archive_emoji;
@@ -232,7 +231,8 @@ async fn handle_archive_message(ctx: &Context, msg: &Message) -> Result<()> {
             Some(x) => x,
             None => {
                 msg.reply(&ctx, USAGE_STRING).await.expect(REPLY_FAILURE);
-                return Err("Invalid archive command".to_owned().into());
+                warn!(command = %msg.content, "Invalid `!` command");
+                return Ok(());
             }
         };
 
@@ -302,9 +302,6 @@ async fn archive(
         let mut messages = channel
             .messages(&ctx, |r| r.limit(MESSAGE_DOWNLOAD_LIMIT))
             .await?;
-        // let mut messages = channel
-        // .messages(&ctx, |r| r.limit(MESSAGE_DOWNLOAD_LIMIT))
-        // .await?;
 
         trace!(download_count = %messages.len());
 
