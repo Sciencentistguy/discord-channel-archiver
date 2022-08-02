@@ -20,7 +20,7 @@ liquid = "0.26.0"
 thiserror = "1.0.31"
 tracing = "0.1.36"
 tracing-subscriber = { version = "0.3.15", features = ["env-filter"] }
-indoc = "1.0.6"
+indoc = "1.0.7"
 
 [dependencies.serenity]
 default-features=false
