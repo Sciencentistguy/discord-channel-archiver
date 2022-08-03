@@ -11,7 +11,7 @@ chrono = "0.4.19"
 futures = "0.3.21"
 regex = "1.6.0"
 reqwest = { version = "0.11.11", default-features = false, features = ["json", "rustls-tls"] }
-serde = "1.0.141"
+serde = "1.0.142"
 serde_json = "1.0.82"
 clap = { version = "3.2.16", features = ["derive"] }
 tokio = { version = "1.20.1", features = ["full"] }
