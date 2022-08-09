@@ -13,18 +13,18 @@ use indoc::indoc;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serenity::async_trait;
+use serenity::model::application::command::Command;
+use serenity::model::application::command::CommandOptionType;
+use serenity::model::application::interaction::application_command::ApplicationCommandInteraction;
+use serenity::model::application::interaction::application_command::CommandDataOptionValue;
+use serenity::model::application::interaction::Interaction;
+use serenity::model::application::interaction::InteractionResponseType;
 use serenity::model::channel::Channel;
 use serenity::model::channel::GuildChannel;
 use serenity::model::channel::Message;
 use serenity::model::gateway::Ready;
 use serenity::model::guild::Guild;
 use serenity::model::id::ChannelId;
-use serenity::model::interactions::application_command::ApplicationCommand;
-use serenity::model::interactions::application_command::ApplicationCommandInteraction;
-use serenity::model::interactions::application_command::ApplicationCommandInteractionDataOptionValue;
-use serenity::model::interactions::application_command::ApplicationCommandOptionType;
-use serenity::model::interactions::Interaction;
-use serenity::model::interactions::InteractionResponseType;
 use serenity::prelude::*;
 use tracing::*;
 use tracing_subscriber::EnvFilter;
@@ -143,7 +143,7 @@ async fn handle_slash_command(
                 .get(0)
                 .and_then(|o| o.resolved.as_ref())
             {
-                Some(ApplicationCommandInteractionDataOptionValue::Channel(c)) => c,
+                Some(CommandDataOptionValue::Channel(c)) => c,
                 _ => unreachable!("Expected channel as first argument"),
             }
             .id
@@ -156,7 +156,7 @@ async fn handle_slash_command(
                 .get(1)
                 .and_then(|o| o.resolved.as_ref())
             {
-                Some(ApplicationCommandInteractionDataOptionValue::String(s)) => match s.as_str() {
+                Some(CommandDataOptionValue::String(s)) => match s.as_str() {
                     "json" => ArchivalMode::Json,
                     "html" => ArchivalMode::Html,
                     "all" => ArchivalMode::All,
@@ -498,7 +498,7 @@ impl EventHandler for Handler {
     async fn ready(&self, ctx: Context, ready: Ready) {
         info!(name = %ready.user.name, num_guilds = %ready.guilds.len(), "Bot logged in");
 
-        let commands = ApplicationCommand::set_global_application_commands(&ctx, |builder| {
+        let commands = Command::set_global_application_commands(&ctx, |builder| {
             builder
                 .create_application_command(|command_builder| {
                     command_builder
@@ -513,14 +513,14 @@ impl EventHandler for Handler {
                             option_builder
                                 .name("channel")
                                 .description("The channel to archive")
-                                .kind(ApplicationCommandOptionType::Channel)
+                                .kind(CommandOptionType::Channel)
                                 .required(true)
                         })
                         .create_option(|option_builder| {
                             option_builder
                                 .name("output_format")
                                 .description("The file format to output to")
-                                .kind(ApplicationCommandOptionType::String)
+                                .kind(CommandOptionType::String)
                                 .add_string_choice("JSON", "json")
                                 .add_string_choice("HTML", "html")
                                 .add_string_choice("all", "all")
