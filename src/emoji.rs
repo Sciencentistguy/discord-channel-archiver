@@ -17,20 +17,19 @@ pub async fn archive_emoji(guild: Guild) -> (usize, PathBuf) {
     info!("Starting emoji archive");
     let output_directory = OPTIONS.output_path.join(format!(
         "{}-{}",
-        guild.name.replace(' ', "-").to_lowercase(),
+        guild.name.replace(char::is_whitespace, "-").to_lowercase(),
         Utc::now().format("%Y-%m-%dT%H-%M-%S")
     ));
-
-    let n = guild.emojis.len();
 
     let mut fut: FuturesUnordered<_> = guild
         .emojis
         .iter()
         .map(|(_, emoji)| {
             let url = emoji.url();
+            debug_assert!(!url.contains('?'), "URL should have no parameters");
             let ext = &url[url
                 .rfind('.')
-                .expect("Emoji url does not have a file extension")
+                .expect("Emoji url should have a file extension")
                 + 1..];
             let download_path = output_directory.join(format!("{}.{}", emoji.name, ext));
             file::download_url(url, download_path)
@@ -43,7 +42,7 @@ pub async fn archive_emoji(guild: Guild) -> (usize, PathBuf) {
         }
     }
 
-    info!(?n, "Emoji download complete");
+    info!(number = ?guild.emojis.len(), "Emoji download complete");
 
-    (n, output_directory)
+    (guild.emojis.len(), output_directory)
 }

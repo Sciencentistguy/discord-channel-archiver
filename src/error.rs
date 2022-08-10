@@ -26,3 +26,9 @@ impl From<String> for Error {
         Self::Custom(s)
     }
 }
+
+impl From<&str> for Error {
+    fn from(s: &str) -> Self {
+        Self::Custom(s.to_owned())
+    }
+}

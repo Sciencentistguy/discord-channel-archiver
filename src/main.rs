@@ -38,8 +38,7 @@ const USAGE_STRING: &str = indoc! { "
     Invalid syntax.
     Correct usage is `!archive <channel> [mode]`, \
     where `channel` is the channel you want to archive, and `mode` \
-    is one of either `json` or `html`. If this is blank, or if is \
-    any other value, all output formats will be generated."
+    is one of either `json`, `html`, or `all`."
 };
 
 const REPLY_FAILURE: &str = "Failed to reply to message";
@@ -123,7 +122,7 @@ async fn handle_slash_command(
                     Ok(format!(
                         "Archived {} emoji into `{}`",
                         n,
-                        output_path.as_os_str().to_str().unwrap()
+                        output_path.display(),
                     ))
                 }
                 None => Err("This command must be used within a guild".to_owned().into()),
@@ -138,12 +137,13 @@ async fn handle_slash_command(
                 .await
                 .expect(REPLY_FAILURE);
 
-            let channel = match command
-                .data
-                .options
-                .get(0)
-                .and_then(|o| o.resolved.as_ref())
-            {
+            assert_eq!(
+                command.data.options.len(),
+                2,
+                "Command framework should only ever provide 2 args"
+            );
+
+            let channel = match command.data.options[0].resolved.as_ref() {
                 Some(CommandDataOptionValue::Channel(c)) => c,
                 _ => unreachable!("Expected channel as first argument"),
             }
@@ -151,18 +151,10 @@ async fn handle_slash_command(
             .to_channel(&ctx)
             .await?;
 
-            let mode = match command
-                .data
-                .options
-                .get(1)
-                .and_then(|o| o.resolved.as_ref())
-            {
-                Some(CommandDataOptionValue::String(s)) => match s.as_str() {
-                    "json" => OutputMode::Json,
-                    "html" => OutputMode::Html,
-                    "all" => OutputMode::All,
-                    _ => unreachable!("Invalid string choice"),
-                },
+            let mode = match command.data.options[1].resolved.as_ref() {
+                Some(CommandDataOptionValue::String(s)) => s
+                    .parse()
+                    .expect("Command framework should prevent invalid responses"),
                 _ => unreachable!("Expected format as second argument"),
             };
 
@@ -221,11 +213,7 @@ async fn handle_archive_message(ctx: &Context, msg: &Message) -> Result<()> {
         let (n, output_path) = emoji::archive_emoji(guild).await;
         msg.reply(
             &ctx,
-            format!(
-                "Archived {} emoji into `{}`",
-                n,
-                output_path.as_os_str().to_str().unwrap()
-            ),
+            format!("Archived {} emoji into `{}`", n, output_path.display(),),
         )
         .await
         .expect(REPLY_FAILURE);
@@ -241,11 +229,7 @@ async fn handle_archive_message(ctx: &Context, msg: &Message) -> Result<()> {
         };
 
         let channel_id_str = &capts[1];
-        let mode = match capts.get(2).map(|x| x.as_str()) {
-            Some("json") => OutputMode::Json,
-            Some("html") => OutputMode::Html,
-            _ => OutputMode::All,
-        };
+        let mode = capts[2].parse()?;
         trace!(channel_id = %channel_id_str, ?mode, "Command parsed");
 
         let channel = match ChannelId::from_str(channel_id_str) {
@@ -292,17 +276,20 @@ async fn download_channel_messages(
 ) -> Result<(Vec<Message>, Duration)> {
     trace!("Begin downloading messages");
     let start = Instant::now();
+
     /// The discord api limits us to retrieving 100 messages at a time
+    ///
     /// See <https://discord.com/developers/docs/resources/channel#get-channel-messages>
     const MESSAGE_DOWNLOAD_LIMIT: u64 = 100;
 
-    // Download the first 100 messages outside the loop, as the retriever closure is different
+    // Download the first 100 messages.
     let mut messages = channel
         .messages(&ctx, |r| r.limit(MESSAGE_DOWNLOAD_LIMIT))
         .await?;
 
     trace!(download_count = %messages.len());
 
+    // Don't attempt to download more messages if zero were downloaded before.
     if !messages.is_empty() {
         loop {
             let last_msg = messages.last().unwrap();
@@ -368,13 +355,13 @@ async fn archive(
 
     let start = Instant::now();
 
-    if matches!(output_mode, OutputMode::All | OutputMode::Json) {
+    if output_mode.do_json() {
         let output_path = OPTIONS.output_path.join(format!("{output_file_stem}.json"));
         json::write_json(ctx, guild, channel, &messages, &output_path).await?;
         files_created.push(output_path);
     }
 
-    if matches!(output_mode, OutputMode::All | OutputMode::Html) {
+    if output_mode.do_html() {
         let output_path = OPTIONS.output_path.join(format!("{output_file_stem}.html"));
         html::write_html(ctx, guild, channel, &messages, &output_path).await?;
         files_created.push(output_path);
@@ -431,7 +418,7 @@ fn archive_response(
         render_time,
         files_created
             .iter()
-            .map(|x| x.to_string_lossy())
+            .map(|x| x.display().to_string())
             .collect::<Vec<_>>()
             .join("\n")
     )
@@ -439,11 +426,44 @@ fn archive_response(
 
 struct Handler;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 enum OutputMode {
     Json,
     Html,
     All,
+}
+
+impl OutputMode {
+    fn do_json(self) -> bool {
+        matches!(self, OutputMode::Json | OutputMode::All)
+    }
+
+    fn do_html(self) -> bool {
+        matches!(self, OutputMode::Html | OutputMode::All)
+    }
+}
+
+impl FromStr for OutputMode {
+    type Err = String;
+
+    fn from_str(s: &str) -> core::result::Result<Self, Self::Err> {
+        match s {
+            "json" => Ok(OutputMode::Json),
+            "html" => Ok(OutputMode::Html),
+            "all" => Ok(OutputMode::All),
+            _ => Err(format!(
+                indoc! { "
+                Invalid output mode {}. Valid values are one of the following:
+                ```
+                - json
+                - html
+                - all
+                ```"
+                },
+                s
+            )),
+        }
+    }
 }
 
 impl std::fmt::Display for OutputMode {
@@ -454,6 +474,7 @@ impl std::fmt::Display for OutputMode {
 
 #[async_trait]
 impl EventHandler for Handler {
+    // Called when a slash-command is invoked.
     async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
         if let Interaction::ApplicationCommand(command) = interaction {
             match handle_slash_command(&ctx, &command).await {
@@ -476,6 +497,10 @@ impl EventHandler for Handler {
         }
     }
 
+    // Called when a message is sent in any channel the bot can see.
+    //
+    // If that message starts with `!archive`, attempt to parse that as an archive command (emoji
+    // or channel.)
     async fn message(&self, ctx: Context, msg: Message) {
         if msg.content.starts_with("!archive") {
             if let Err(e) = handle_archive_message(&ctx, &msg).await {
@@ -487,6 +512,9 @@ impl EventHandler for Handler {
         }
     }
 
+    // Called when the bot is ready.
+    //
+    // Register slash commands.
     async fn ready(&self, ctx: Context, ready: Ready) {
         info!(name = %ready.user.name, num_guilds = %ready.guilds.len(), "Bot logged in");
 
