@@ -6,6 +6,7 @@ mod json;
 
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::time::Duration;
 use std::time::Instant;
 
 use clap::Parser;
@@ -94,8 +95,8 @@ async fn main() {
 }
 
 struct ArchiveLog {
-    download_time: std::time::Duration,
-    render_time: std::time::Duration,
+    download_time: Duration,
+    render_time: Duration,
     files_created: Vec<PathBuf>,
 }
 
@@ -157,9 +158,9 @@ async fn handle_slash_command(
                 .and_then(|o| o.resolved.as_ref())
             {
                 Some(CommandDataOptionValue::String(s)) => match s.as_str() {
-                    "json" => ArchivalMode::Json,
-                    "html" => ArchivalMode::Html,
-                    "all" => ArchivalMode::All,
+                    "json" => OutputMode::Json,
+                    "html" => OutputMode::Html,
+                    "all" => OutputMode::All,
                     _ => unreachable!("Invalid string choice"),
                 },
                 _ => unreachable!("Expected format as second argument"),
@@ -241,9 +242,9 @@ async fn handle_archive_message(ctx: &Context, msg: &Message) -> Result<()> {
 
         let channel_id_str = &capts[1];
         let mode = match capts.get(2).map(|x| x.as_str()) {
-            Some("json") => ArchivalMode::Json,
-            Some("html") => ArchivalMode::Html,
-            _ => ArchivalMode::All,
+            Some("json") => OutputMode::Json,
+            Some("html") => OutputMode::Html,
+            _ => OutputMode::All,
         };
         trace!(channel_id = %channel_id_str, ?mode, "Command parsed");
 
@@ -285,36 +286,33 @@ async fn handle_archive_message(ctx: &Context, msg: &Message) -> Result<()> {
     Ok(())
 }
 
-#[instrument(skip_all)]
-async fn archive(
+async fn download_channel_messages(
     ctx: &Context,
     channel: &GuildChannel,
-    guild: &Guild,
-    output_mode: ArchivalMode,
-) -> Result<ArchiveLog> {
+) -> Result<(Vec<Message>, Duration)> {
     trace!("Begin downloading messages");
     let start = Instant::now();
+    /// The discord api limits us to retrieving 100 messages at a time
+    /// See <https://discord.com/developers/docs/resources/channel#get-channel-messages>
+    const MESSAGE_DOWNLOAD_LIMIT: u64 = 100;
 
-    // Download messages
-    let messages = {
-        /// The discord api limits us to retrieving 100 messages at a time
-        /// See <https://discord.com/developers/docs/resources/channel#get-channel-messages>
-        const MESSAGE_DOWNLOAD_LIMIT: u64 = 100;
+    // Download the first 100 messages outside the loop, as the retriever closure is different
+    let mut messages = channel
+        .messages(&ctx, |r| r.limit(MESSAGE_DOWNLOAD_LIMIT))
+        .await?;
 
-        // Download the first 100 messages outside the loop, as the retriever closure is different
-        let mut messages = channel
-            .messages(&ctx, |r| r.limit(MESSAGE_DOWNLOAD_LIMIT))
-            .await?;
+    trace!(download_count = %messages.len());
 
-        trace!(download_count = %messages.len());
-
+    if !messages.is_empty() {
         loop {
             let last_msg = messages.last().unwrap();
-            let new_msgs = match channel
+            let new_msgs = channel
                 .id
-                .messages(&ctx, |retriever| retriever.before(last_msg.id).limit(100))
-                .await
-            {
+                .messages(&ctx, |r| {
+                    r.before(last_msg.id).limit(MESSAGE_DOWNLOAD_LIMIT)
+                })
+                .await;
+            let new_msgs = match new_msgs {
                 Ok(x) => x,
                 Err(e) => {
                     warn!(
@@ -323,7 +321,7 @@ async fn archive(
                         "While trying to download messages, \
                         Discord returned an error. Waiting 5 seconds before retrying",
                     );
-                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    tokio::time::sleep(Duration::from_secs(5)).await;
                     continue;
                 }
             };
@@ -331,25 +329,36 @@ async fn archive(
 
             messages.extend(new_msgs.into_iter());
 
-            // If the api sends fewer than 100 messages, we have fetched all the messages in the
-            // channel
-            if recv_count != 100 {
+            // If the api sends fewer than `MESSAGE_DOWNLOAD_LIMIT` messages, we have fetched all
+            // the messages in the channel
+            if recv_count != MESSAGE_DOWNLOAD_LIMIT as usize {
                 messages.reverse();
-                break messages;
+                break;
             }
         }
-    };
+    }
 
     let end = Instant::now();
     let download_time = end - start;
 
+    Ok((messages, download_time))
+}
+
+#[instrument(skip_all)]
+async fn archive(
+    ctx: &Context,
+    channel: &GuildChannel,
+    guild: &Guild,
+    output_mode: OutputMode,
+) -> Result<ArchiveLog> {
+    let (messages, download_time) = download_channel_messages(ctx, channel).await?;
     info!(
         count = %messages.len(),
         time_taken = ?download_time,
         "Downloaded messages"
     );
 
-    let output_file_stem_common = format!(
+    let output_file_stem = format!(
         "{}-{}",
         guild.name.replace(char::is_whitespace, "_"),
         channel.name.replace(char::is_whitespace, "_"),
@@ -357,37 +366,20 @@ async fn archive(
 
     let mut files_created = Vec::new();
 
-    // XXX This is a litte ugly.
     let start = Instant::now();
-    match output_mode {
-        ArchivalMode::Json => {
-            let output_path = OPTIONS
-                .output_path
-                .join(format!("{}.json", output_file_stem_common));
-            json::write_json(ctx, guild, &messages, &output_path).await?;
-            files_created.push(output_path);
-        }
-        ArchivalMode::Html => {
-            let output_path = OPTIONS
-                .output_path
-                .join(format!("{}.html", output_file_stem_common));
-            html::write_html(ctx, guild, channel, &messages, &output_path).await?;
-            files_created.push(output_path);
-        }
-        ArchivalMode::All => {
-            let output_path = OPTIONS
-                .output_path
-                .join(format!("{}.json", output_file_stem_common));
-            json::write_json(ctx, guild, &messages, &output_path).await?;
-            files_created.push(output_path);
 
-            let output_path = OPTIONS
-                .output_path
-                .join(format!("{}.html", output_file_stem_common));
-            html::write_html(ctx, guild, channel, &messages, &output_path).await?;
-            files_created.push(output_path);
-        }
+    if matches!(output_mode, OutputMode::All | OutputMode::Json) {
+        let output_path = OPTIONS.output_path.join(format!("{output_file_stem}.json"));
+        json::write_json(ctx, guild, channel, &messages, &output_path).await?;
+        files_created.push(output_path);
     }
+
+    if matches!(output_mode, OutputMode::All | OutputMode::Html) {
+        let output_path = OPTIONS.output_path.join(format!("{output_file_stem}.html"));
+        html::write_html(ctx, guild, channel, &messages, &output_path).await?;
+        files_created.push(output_path);
+    }
+
     let end = Instant::now();
     let render_time = end - start;
 
@@ -448,13 +440,13 @@ fn archive_response(
 struct Handler;
 
 #[derive(Debug)]
-enum ArchivalMode {
+enum OutputMode {
     Json,
     Html,
     All,
 }
 
-impl std::fmt::Display for ArchivalMode {
+impl std::fmt::Display for OutputMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}", self)
     }
